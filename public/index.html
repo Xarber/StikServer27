@@ -13,13 +13,14 @@
       <header>
         <div>
           <p class="eyebrow">StikServer</p>
-          <h1>Remote devices</h1>
+          <h1>Nearby Control</h1>
         </div>
         <span id="status" class="status">Connecting</span>
       </header>
 
       <section class="layout">
         <aside class="devices-panel">
+          <h2 class="section-title">Nearby Devices</h2>
           <div id="devices" class="devices"></div>
           <p id="empty" class="empty">Searching the local network for iPhone and iPad devices…</p>
         </aside>
@@ -30,6 +31,32 @@
             <div id="placeholder" class="placeholder">
               <span>Choose a connected device</span>
             </div>
+            <div id="fullscreen-controls" class="fullscreen-controls expanded" aria-label="Fullscreen remote controls">
+              <div class="floating-control-header">
+                <span id="controls-drag-handle" class="controls-drag-handle" title="Drag controls">StikDebug Controls</span>
+                <button id="toggle-fullscreen-controls" type="button" aria-label="Collapse controls" title="Collapse controls">⌄</button>
+              </div>
+              <div class="floating-control-body">
+                <div class="hardware-controls">
+                  <button data-command="volumeDown" title="Volume down">Volume −</button>
+                  <button data-command="home" title="Home">Home</button>
+                  <button data-command="lock" title="Lock">Lock</button>
+                  <button data-command="volumeUp" title="Volume up">Volume +</button>
+                  <button data-command="mute">Mute</button>
+                  <button data-command="siri">Siri</button>
+                  <button data-command="rotateLeft">Rotate left</button>
+                  <button data-command="rotateRight">Rotate right</button>
+                </div>
+                <div class="fullscreen-actions">
+                  <button data-command="softwareKeyboard">Device keyboard</button>
+                  <button data-focus-keyboard>Type</button>
+                  <button data-screenshot>Screenshot</button>
+                  <button data-fullscreen>Exit fullscreen</button>
+                  <button data-disconnect class="destructive">Stop mirroring</button>
+                </div>
+                <textarea class="live-text fullscreen-live-text" rows="1" autocomplete="off" autocapitalize="sentences" spellcheck="false" placeholder="Type directly on the device" aria-label="Type directly on the remote device"></textarea>
+              </div>
+            </div>
           </div>
 
           <div class="controls" aria-label="Remote controls">
@@ -37,21 +64,21 @@
             <button data-command="home" title="Press the Home button">Home</button>
             <button data-command="lock" title="Press the device lock button">Lock</button>
             <button data-command="volumeUp" title="Raise the device volume">Volume +</button>
-            <button data-command="softwareKeyboard" class="half">Toggle software keyboard</button>
-            <button id="fullscreen" class="half">Fullscreen</button>
+            <button data-command="rotateLeft" title="Rotate the device left">Rotate left</button>
+            <button data-command="rotateRight" title="Rotate the device right">Rotate right</button>
+            <button data-command="softwareKeyboard">Device keyboard</button>
+            <button data-fullscreen>Fullscreen</button>
             <button id="pair" class="wide" hidden>Pair with StikServer</button>
             <button id="import-pairing" class="wide" hidden>Import pairing file</button>
             <input id="pairing-file" type="file" accept=".plist,application/x-plist,application/xml,text/xml" hidden>
-            <label class="live-input"><span>Live keyboard input</span><textarea id="live-text" rows="1" autocomplete="off" autocapitalize="sentences" spellcheck="false" placeholder="Tap here, then type directly on the device" aria-label="Type directly on the remote device"></textarea></label>
-            <details class="more-controls">
+            <label class="live-input"><span>Live keyboard input</span><textarea class="live-text" rows="1" autocomplete="off" autocapitalize="sentences" spellcheck="false" placeholder="Tap here, then type directly on the device" aria-label="Type directly on the remote device"></textarea></label>
+            <details class="more-controls" open>
               <summary>More controls</summary>
               <div>
                 <button data-command="mute">Mute</button>
                 <button data-command="siri">Siri</button>
-                <button data-command="rotateLeft">Rotate left</button>
-                <button data-command="rotateRight">Rotate right</button>
-                <button id="screenshot" type="button">Save screenshot</button>
-                <button id="disconnect-device" type="button">Disconnect</button>
+                <button data-screenshot type="button">Save screenshot</button>
+                <button data-disconnect type="button" class="destructive">Stop mirroring</button>
               </div>
             </details>
           </div>

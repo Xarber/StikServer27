@@ -47,6 +47,7 @@ function connect() {
     if (event.data instanceof Blob) return displayFrame(event.data);
     const message = JSON.parse(event.data);
     if (message.type === "devices") renderDevices(message.devices);
+    if (message.type === "subscribed") handleSubscription(message.deviceId);
     if (message.type === "pairing") handlePairing(message);
     if (message.type === "deviceEvent" && message.deviceId === selectedDevice) {
       if (message.event?.type === "orientation") {
@@ -78,7 +79,8 @@ function renderDevices(devices) {
     const button = document.createElement("button");
     button.className = `device${device.id === selectedDevice ? " selected" : ""}`;
     button.dataset.deviceId = device.id;
-    button.innerHTML = `<span class="device-icon">${device.kind === "iPad" ? "▭" : "▯"}</span><span><strong></strong><small class="device-state"></small><small class="device-identifier"></small></span>`;
+    const iconKind = device.kind === "iPad" ? "ipad" : "iphone";
+    button.innerHTML = `<span class="device-icon ${iconKind}" aria-hidden="true"></span><span><strong></strong><small class="device-state"></small><small class="device-identifier"></small></span>`;
     button.querySelector("strong").textContent = device.name;
     button.querySelector(".device-state").textContent = device.controllable
       ? `${device.kind} · Ready`
@@ -95,10 +97,11 @@ function renderDevices(devices) {
 function selectDevice(id) {
   selectedDevice = id;
   currentOrientation = "portrait";
+  clearCurrentFrame();
   applyScreenOrientation();
   const device = knownDevices.find(candidate => candidate.id === id);
   send({ type: "subscribe", deviceId: device?.controllable ? id : null });
-  placeholder.hidden = Boolean(device?.controllable);
+  placeholder.hidden = false;
   pairButton.hidden = !device || device.mode !== "direct" || device.paired;
   importPairingButton.hidden = !device || device.mode !== "direct" || device.paired;
   if (device && !device.controllable) {
@@ -108,8 +111,7 @@ function selectDevice(id) {
     placeholder.querySelector("span").textContent = id ? "Connecting to device…" : "Choose a connected device";
   }
   if (!id) {
-    screen.style.display = "none";
-    screen.removeAttribute("src");
+    clearCurrentFrame();
   }
   for (const button of devicesElement.children) {
     button.classList.toggle("selected", button.dataset.deviceId === id);
@@ -122,6 +124,13 @@ function selectDevice(id) {
   if (id) send({ type: "batteryHistory", deviceId: id });
 }
 
+function handleSubscription(deviceId) {
+  if (!selectedDevice || deviceId !== selectedDevice) return;
+  placeholder.hidden = false;
+  placeholder.querySelector("span").textContent = "Waiting for display…";
+  showStatus("Connected to device", true);
+}
+
 function displayFrame(blob) {
   if (!selectedDevice) return;
   const nextURL = URL.createObjectURL(blob);
@@ -129,55 +138,40 @@ function displayFrame(blob) {
     if (currentFrameURL) URL.revokeObjectURL(currentFrameURL);
     currentFrameURL = nextURL;
     applyScreenOrientation();
+    placeholder.hidden = true;
+    showStatus("Viewing device", true);
   };
   screen.src = nextURL;
   screen.style.display = "block";
-  placeholder.hidden = true;
   applyScreenOrientation();
 }
 
 function normalizedPoint(event) {
   const imageRect = screen.getBoundingClientRect();
-  const landscape = currentOrientation === "landscapeLeft" || currentOrientation === "landscapeRight";
-  const naturalWidth = landscape ? screen.naturalHeight : screen.naturalWidth;
-  const naturalHeight = landscape ? screen.naturalWidth : screen.naturalHeight;
-  const naturalRatio = (naturalWidth || imageRect.width) / (naturalHeight || imageRect.height);
-  const boxRatio = imageRect.width / imageRect.height;
-  let width = imageRect.width;
-  let height = imageRect.height;
-  let left = imageRect.left;
-  let top = imageRect.top;
-  if (boxRatio > naturalRatio) {
-    width = height * naturalRatio;
-    left += (imageRect.width - width) / 2;
-  } else {
-    height = width / naturalRatio;
-    top += (imageRect.height - height) / 2;
-  }
   return {
-    x: Math.max(0, Math.min(1, (event.clientX - left) / width)),
-    y: Math.max(0, Math.min(1, (event.clientY - top) / height))
+    x: Math.max(0, Math.min(1, (event.clientX - imageRect.left) / imageRect.width)),
+    y: Math.max(0, Math.min(1, (event.clientY - imageRect.top) / imageRect.height))
   };
 }
 
 function applyScreenOrientation() {
+  if (!screen.naturalWidth || !screen.naturalHeight || screen.style.display === "none") return;
   const landscape = currentOrientation === "landscapeLeft" || currentOrientation === "landscapeRight";
-  if (landscape) {
-    screen.style.width = `${shell.clientHeight}px`;
-    screen.style.height = `${shell.clientWidth}px`;
-    screen.style.maxHeight = "none";
-    screen.style.transform = currentOrientation === "landscapeRight" ? "rotate(90deg)" : "rotate(-90deg)";
-  } else {
-    screen.style.width = "100%";
-    screen.style.height = "100%";
-    screen.style.maxHeight = "";
-    screen.style.transform = currentOrientation === "portraitUpsideDown" ? "rotate(180deg)" : "none";
-  }
+  const displayWidth = landscape ? screen.naturalHeight : screen.naturalWidth;
+  const displayHeight = landscape ? screen.naturalWidth : screen.naturalHeight;
+  const scale = Math.min(shell.clientWidth / displayWidth, shell.clientHeight / displayHeight);
+  screen.style.width = `${screen.naturalWidth * scale}px`;
+  screen.style.height = `${screen.naturalHeight * scale}px`;
+  const rotation = currentOrientation === "landscapeRight" ? 90
+    : currentOrientation === "landscapeLeft" ? -90
+      : currentOrientation === "portraitUpsideDown" ? 180 : 0;
+  screen.style.transform = `translate(-50%, -50%) rotate(${rotation}deg)`;
 }
 
 window.addEventListener("resize", applyScreenOrientation);
 
 shell.addEventListener("pointerdown", event => {
+  if (event.target.closest(".fullscreen-controls")) return;
   if (!selectedDevice || screen.style.display === "none") return;
   shell.setPointerCapture(event.pointerId);
   pointerDown = normalizedPoint(event);
@@ -202,65 +196,121 @@ document.querySelectorAll("[data-command]").forEach(button => {
   }));
 });
 
-const liveText = document.querySelector("#live-text");
-let composingText = false;
-liveText.addEventListener("compositionstart", () => { composingText = true; });
-liveText.addEventListener("compositionend", event => {
-  composingText = false;
-  if (event.data) command("text", { text: event.data });
-  liveText.value = "";
-});
-liveText.addEventListener("beforeinput", event => {
-  if (composingText) return;
-  if (event.inputType.startsWith("delete")) {
-    event.preventDefault();
-    command("backspace");
-  } else if (event.inputType === "insertLineBreak" || event.inputType === "insertParagraph") {
-    event.preventDefault();
-    command("text", { text: "\n" });
-  } else if (event.data) {
-    event.preventDefault();
-    command("text", { text: event.data });
-  }
-  liveText.value = "";
-});
-liveText.addEventListener("paste", event => {
-  event.preventDefault();
-  const text = event.clipboardData?.getData("text/plain") || "";
-  if (text) command("text", { text });
-});
-liveText.addEventListener("input", () => {
-  if (composingText || !liveText.value) return;
-  command("text", { text: liveText.value });
-  liveText.value = "";
-});
+document.querySelectorAll(".live-text").forEach(installLiveKeyboard);
 
-document.querySelector("#fullscreen").addEventListener("click", async () => {
+function installLiveKeyboard(liveText) {
+  let composingText = false;
+  liveText.addEventListener("compositionstart", () => { composingText = true; });
+  liveText.addEventListener("compositionend", event => {
+    composingText = false;
+    if (event.data) command("text", { text: event.data });
+    liveText.value = "";
+  });
+  liveText.addEventListener("beforeinput", event => {
+    if (composingText) return;
+    if (event.inputType.startsWith("delete")) {
+      event.preventDefault();
+      command("backspace");
+    } else if (event.inputType === "insertLineBreak" || event.inputType === "insertParagraph") {
+      event.preventDefault();
+      command("text", { text: "\n" });
+    } else if (event.data) {
+      event.preventDefault();
+      command("text", { text: event.data });
+    }
+    liveText.value = "";
+  });
+  liveText.addEventListener("paste", event => {
+    event.preventDefault();
+    const text = event.clipboardData?.getData("text/plain") || "";
+    if (text) command("text", { text });
+  });
+  liveText.addEventListener("input", () => {
+    if (composingText || !liveText.value) return;
+    command("text", { text: liveText.value });
+    liveText.value = "";
+  });
+}
+
+document.querySelectorAll("[data-fullscreen]").forEach(button => button.addEventListener("click", toggleFullscreen));
+
+async function toggleFullscreen() {
   try {
     if (document.fullscreenElement) await document.exitFullscreen();
-    else await document.documentElement.requestFullscreen();
+    else await shell.requestFullscreen();
   } catch {
-    // Some mobile browsers only permit fullscreen video; the responsive layout remains usable.
+    showStatus("Fullscreen is unavailable in this browser", false);
   }
+}
+
+document.addEventListener("fullscreenchange", () => {
+  applyScreenOrientation();
+  document.querySelectorAll("[data-fullscreen]").forEach(button => {
+    button.textContent = document.fullscreenElement ? "Exit fullscreen" : "Fullscreen";
+  });
 });
 
-document.querySelector("#screenshot").addEventListener("click", () => {
+document.querySelectorAll("[data-screenshot]").forEach(button => button.addEventListener("click", () => {
   if (!currentFrameURL) return;
   const link = document.createElement("a");
   link.href = currentFrameURL;
   link.download = `stikserver-${selectedDevice || "device"}-${new Date().toISOString().replaceAll(":", "-")}.jpg`;
   link.click();
-});
+}));
 
-document.querySelector("#disconnect-device").addEventListener("click", () => {
+document.querySelectorAll("[data-disconnect]").forEach(button => button.addEventListener("click", () => {
   send({ type: "unsubscribe" });
+  clearCurrentFrame();
+  placeholder.hidden = false;
+  placeholder.querySelector("span").textContent = "Mirroring stopped. Select the device again to reconnect.";
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+}));
+
+function clearCurrentFrame() {
   if (currentFrameURL) URL.revokeObjectURL(currentFrameURL);
   currentFrameURL = null;
   screen.style.display = "none";
   screen.removeAttribute("src");
-  placeholder.hidden = false;
-  placeholder.querySelector("span").textContent = "Disconnected. Choose the device again to reconnect.";
-});
+}
+
+document.querySelectorAll("[data-focus-keyboard]").forEach(button => button.addEventListener("click", () => {
+  document.querySelector(".fullscreen-live-text")?.focus();
+}));
+
+installFloatingControls();
+
+function installFloatingControls() {
+  const palette = document.querySelector("#fullscreen-controls");
+  const toggle = document.querySelector("#toggle-fullscreen-controls");
+  const handle = document.querySelector("#controls-drag-handle");
+  toggle.addEventListener("click", () => {
+    const expanded = palette.classList.toggle("expanded");
+    toggle.textContent = expanded ? "⌄" : "⌃";
+    toggle.setAttribute("aria-label", expanded ? "Collapse controls" : "Expand controls");
+  });
+  let drag = null;
+  handle.addEventListener("pointerdown", event => {
+    const paletteRect = palette.getBoundingClientRect();
+    const shellRect = shell.getBoundingClientRect();
+    drag = { x: event.clientX, y: event.clientY, left: paletteRect.left - shellRect.left, top: paletteRect.top - shellRect.top };
+    palette.style.left = `${drag.left}px`;
+    palette.style.top = `${drag.top}px`;
+    palette.style.right = "auto";
+    palette.style.bottom = "auto";
+    handle.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+  handle.addEventListener("pointermove", event => {
+    if (!drag) return;
+    const left = Math.min(Math.max(8, drag.left + event.clientX - drag.x), Math.max(8, shell.clientWidth - palette.offsetWidth - 8));
+    const top = Math.min(Math.max(8, drag.top + event.clientY - drag.y), Math.max(8, shell.clientHeight - palette.offsetHeight - 8));
+    palette.style.left = `${left}px`;
+    palette.style.top = `${top}px`;
+  });
+  const endDrag = () => { drag = null; };
+  handle.addEventListener("pointerup", endDrag);
+  handle.addEventListener("pointercancel", endDrag);
+}
 
 pairButton.addEventListener("click", () => {
   if (selectedDevice) send({ type: "pair", deviceId: selectedDevice });

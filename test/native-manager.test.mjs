@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FramedRecordParser, JpegParser, isPairingPlist, preferredAddress } from "../native-manager.mjs";
+import { FramedRecordParser, JpegParser, isPairingPlist, preferredAddress, videoDecoderArguments } from "../native-manager.mjs";
 
 test("parses split native records", () => {
   const records = [];
@@ -45,4 +45,10 @@ test("recognizes bounded XML and binary pairing plists", () => {
   assert.equal(isPairingPlist(binary), true);
   assert.equal(isPairingPlist(Buffer.from("not a pairing identity")), false);
   assert.equal(isPairingPlist(Buffer.alloc(1024 * 1024 + 1)), false);
+});
+
+test("leaves display orientation to the live SpringBoard transform", () => {
+  const arguments_ = videoDecoderArguments();
+  assert.ok(arguments_.includes("-noautorotate"));
+  assert.ok(arguments_.indexOf("-noautorotate") < arguments_.indexOf("-i"));
 });

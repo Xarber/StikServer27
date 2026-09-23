@@ -13,6 +13,17 @@ export function isPairingPlist(bytes) {
   return bytes.toString("utf8", 0, Math.min(bytes.length, 512)).includes("<plist");
 }
 
+export function videoDecoderArguments() {
+  return [
+    "-hide_banner", "-loglevel", "error",
+    // The HEVC stream carries display-orientation metadata. StikServer
+    // applies SpringBoard's live orientation in the viewer, so allowing
+    // FFmpeg to autorotate here would rotate landscape frames a second time.
+    "-noautorotate", "-f", "hevc", "-i", "pipe:0",
+    "-an", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "5", "pipe:1"
+  ];
+}
+
 export class FramedRecordParser {
   constructor(onRecord) {
     this.onRecord = onRecord;
@@ -206,11 +217,7 @@ export class NativeDeviceManager extends EventEmitter {
       "--port", String(device.port),
       "--pairing", this.pairingPath(device)
     ], { stdio: ["pipe", "pipe", "pipe"] });
-    const decoder = spawn(this.ffmpeg, [
-      "-hide_banner", "-loglevel", "error",
-      "-f", "hevc", "-i", "pipe:0",
-      "-an", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "5", "pipe:1"
-    ], { stdio: ["pipe", "pipe", "pipe"] });
+    const decoder = spawn(this.ffmpeg, videoDecoderArguments(), { stdio: ["pipe", "pipe", "pipe"] });
     const session = { device, native, decoder, stopped: false, orientation: "unknown" };
     this.sessions.set(device.id, session);
 
