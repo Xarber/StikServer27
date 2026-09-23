@@ -55,6 +55,24 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: npm run dist
+      - name: Verify bundled device runtime
+        shell: bash
+        run: |
+          native_count=$(find dist -type f \( -name stikserver-native -o -name stikserver-native.exe \) | wc -l | tr -d ' ')
+          ffmpeg_count=$(find dist -type f \( -name ffmpeg -o -name ffmpeg.exe \) | wc -l | tr -d ' ')
+          test "$native_count" -gt 0
+          test "$ffmpeg_count" -gt 0
+      - name: Verify macOS identity and local-network metadata
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          app_path=$(find dist -type d -name StikServer.app -print -quit)
+          test -n "$app_path"
+          test "$(plutil -extract CFBundleIdentifier raw "$app_path/Contents/Info.plist")" = "com.xarber.stikserver"
+          test "$(plutil -extract NSBonjourServices.0 raw "$app_path/Contents/Info.plist")" = "_remotepairing._tcp"
+          plutil -extract NSLocalNetworkUsageDescription raw "$app_path/Contents/Info.plist" | grep -q StikServer
+          icon_name=$(plutil -extract CFBundleIconFile raw "$app_path/Contents/Info.plist")
+          test "$icon_name" != "electron.icns"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}

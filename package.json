@@ -1,13 +1,13 @@
 {
   "name": "stikserver",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "main": "desktop/main.mjs",
   "scripts": {
     "start": "node server.mjs",
     "desktop": "electron .",
-    "dist": "electron-builder --publish never",
+    "dist": "electron-builder --config electron-builder.config.cjs --publish never",
     "check": "node --check server.mjs && node --check discovery.mjs && node --check native-manager.mjs && node --check battery-history.mjs && node --check public/app.js && node --check desktop/main.mjs && node --check desktop/preload.cjs",
     "test": "node --test"
   },
