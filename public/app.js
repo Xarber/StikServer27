@@ -325,6 +325,14 @@ document.querySelectorAll("[data-toggle-command]").forEach(input => {
 });
 document.querySelector("#apply-text-size").addEventListener("click", () => command("setTextSize", { size: document.querySelector("#text-size").value }));
 document.querySelector("#apply-glass").addEventListener("click", () => command("setLiquidGlassOpacity", { value: Number(document.querySelector("#glass-opacity").value) }));
+document.querySelector("#apply-color-filter").addEventListener("click", () => {
+  const filterType = document.querySelector("#color-filter").value;
+  command("setColorFilter", {
+    enabled: Boolean(filterType),
+    filterType: filterType || null,
+    value: Number(document.querySelector("#color-filter-intensity").value)
+  });
+});
 document.querySelector("#enable-condition").addEventListener("click", () => {
   const value = document.querySelector("#condition-profile").value;
   if (!value) return showStatus("Choose a condition profile", false);
@@ -341,6 +349,10 @@ document.querySelectorAll("[data-danger-command]").forEach(button => {
 
 function applyConfiguration(configuration) {
   if (configuration.textSize) document.querySelector("#text-size").value = configuration.textSize;
+  if (configuration.colorFilter) {
+    document.querySelector("#color-filter").value = configuration.colorFilter.enabled ? configuration.colorFilter.type || "Grayscale" : "";
+    if (configuration.colorFilter.intensity != null) document.querySelector("#color-filter-intensity").value = configuration.colorFilter.intensity;
+  }
   const toggles = {
     setReduceMotion: configuration.reduceMotion,
     setReduceTransparency: configuration.reduceTransparency,

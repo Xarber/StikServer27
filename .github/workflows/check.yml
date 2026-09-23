@@ -37,10 +37,11 @@ jobs:
           set -o pipefail
           if ! output=$(cargo check --manifest-path native/Cargo.toml 2>&1); then
             printf '%s\n' "$output"
-            output=${output//'%'/'%25'}
-            output=${output//$'\n'/'%0A'}
-            output=${output//$'\r'/'%0D'}
-            echo "::error title=Native backend failed to compile::$output"
+            errors=$(printf '%s\n' "$output" | tail -n 180)
+            errors=${errors//'%'/'%25'}
+            errors=${errors//$'\n'/'%0A'}
+            errors=${errors//$'\r'/'%0D'}
+            echo "::error title=Native backend failed to compile::$errors"
             exit 1
           fi
           printf '%s\n' "$output"
