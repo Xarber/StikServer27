@@ -56,6 +56,89 @@
               </div>
             </details>
           </div>
+
+          <section class="toolbox" aria-label="Device tools">
+            <nav class="tool-tabs" aria-label="Tool categories">
+              <button class="active" data-tool-tab="overview">Overview</button>
+              <button data-tool-tab="processes">Processes</button>
+              <button data-tool-tab="battery">Battery</button>
+              <button data-tool-tab="location">Location</button>
+              <button data-tool-tab="advanced">Advanced</button>
+            </nav>
+
+            <div class="tool-panel active" data-tool-panel="overview">
+              <div class="panel-heading">
+                <div><h2>Device overview</h2><p>Hardware, networking, diagnostics and a live performance sample.</p></div>
+                <div class="button-row"><button data-action="deviceInfo">Refresh info</button><button data-action="performance">Sample performance</button><button data-action="diagnostics">Diagnostics</button></div>
+              </div>
+              <pre id="overview-output" class="data-output">Select a ready device.</pre>
+            </div>
+
+            <div class="tool-panel" data-tool-panel="processes">
+              <div class="panel-heading">
+                <div><h2>Processes</h2><p>Inspect running processes and terminate a selected PID.</p></div>
+                <button data-action="processes">Refresh</button>
+              </div>
+              <input id="process-filter" type="search" placeholder="Filter processes" aria-label="Filter processes">
+              <div id="process-list" class="process-list"><p class="muted">Load the running process list to begin.</p></div>
+            </div>
+
+            <div class="tool-panel" data-tool-panel="battery">
+              <div class="panel-heading">
+                <div><h2>Battery health</h2><p>Measurements are saved in this browser to build history over time.</p></div>
+                <button data-action="battery">Record measurement</button>
+              </div>
+              <div id="battery-metrics" class="metric-grid"></div>
+              <svg id="battery-chart" class="battery-chart" viewBox="0 0 600 180" role="img" aria-label="Battery health history"></svg>
+              <div id="battery-insights" class="insights"></div>
+            </div>
+
+            <div class="tool-panel" data-tool-panel="location">
+              <div class="panel-heading"><div><h2>Location simulation</h2><p>The simulated location remains active while the device session is connected.</p></div></div>
+              <form id="location-form" class="field-grid">
+                <label>Latitude<input id="latitude" type="number" min="-90" max="90" step="any" required></label>
+                <label>Longitude<input id="longitude" type="number" min="-180" max="180" step="any" required></label>
+                <button type="submit">Set location</button>
+                <button id="clear-location" type="button">Clear location</button>
+              </form>
+            </div>
+
+            <div class="tool-panel" data-tool-panel="advanced">
+              <div class="panel-heading">
+                <div><h2>Advanced environment</h2><p>Xcode-style appearance, accessibility, throttling and power controls.</p></div>
+                <div class="button-row"><button data-action="configuration">Refresh settings</button><button data-action="conditions">Load conditions</button></div>
+              </div>
+              <div class="advanced-grid">
+                <fieldset>
+                  <legend>Appearance</legend>
+                  <div class="button-row"><button data-command-value="setAppearance:light">Light</button><button data-command-value="setAppearance:dark">Dark</button></div>
+                  <label>Text size<select id="text-size">
+                    <option value="xSmall">Extra Small</option><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option><option value="xLarge">Extra Large</option><option value="xxLarge">XX Large</option><option value="xxxLarge">XXX Large</option><option value="accessibilityMedium">Accessibility Medium</option><option value="accessibilityLarge">Accessibility Large</option><option value="accessibilityXLarge">Accessibility XL</option><option value="accessibilityXXLarge">Accessibility XXL</option><option value="accessibilityXXXLarge">Accessibility XXXL</option>
+                  </select></label>
+                  <button id="apply-text-size" type="button">Apply text size</button>
+                  <label>Liquid Glass opacity<input id="glass-opacity" type="range" min="0" max="1" step="0.05" value="1"></label>
+                  <button id="apply-glass" type="button">Apply opacity</button>
+                </fieldset>
+                <fieldset>
+                  <legend>Accessibility and debugging</legend>
+                  <label><input type="checkbox" data-toggle-command="setReduceMotion"> Reduce Motion</label>
+                  <label><input type="checkbox" data-toggle-command="setReduceTransparency"> Reduce Transparency</label>
+                  <label><input type="checkbox" data-toggle-command="setIncreaseContrast"> Increase Contrast</label>
+                  <label><input type="checkbox" data-toggle-command="setShowBorders"> Show layout borders</label>
+                </fieldset>
+                <fieldset>
+                  <legend>Device conditions</legend>
+                  <select id="condition-profile"><option value="">Load available conditions first</option></select>
+                  <div class="button-row"><button id="enable-condition" type="button">Enable</button><button id="disable-condition" type="button">Disable</button></div>
+                </fieldset>
+                <fieldset>
+                  <legend>Power</legend>
+                  <div class="button-row"><button data-danger-command="sleep">Sleep</button><button data-danger-command="restart">Restart</button><button data-danger-command="shutdown">Shut down</button></div>
+                </fieldset>
+              </div>
+              <pre id="advanced-output" class="data-output">Load settings or conditions to begin.</pre>
+            </div>
+          </section>
         </section>
       </section>
     </main>

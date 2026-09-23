@@ -17,6 +17,7 @@ body {
 }
 
 button { font: inherit; }
+button, input, select { font: inherit; }
 main { width: min(1180px, 100%); min-height: 100dvh; margin: auto; padding: max(20px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); }
 header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
 h1 { margin: 2px 0 0; font-size: clamp(1.6rem, 5vw, 2.45rem); letter-spacing: -.04em; }
@@ -50,6 +51,36 @@ h1 { margin: 2px 0 0; font-size: clamp(1.6rem, 5vw, 2.45rem); letter-spacing: -.
 .more-controls { grid-column: 1 / -1; border: 1px solid rgba(255,255,255,.1); border-radius: 14px; background: rgba(255,255,255,.04); }
 .more-controls summary { padding: 13px 14px; cursor: pointer; color: #d8d7df; }
 .more-controls > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; padding: 0 8px 8px; }
+.toolbox { margin-top: 14px; border-top: 1px solid rgba(255,255,255,.1); padding-top: 14px; }
+.tool-tabs { display: flex; gap: 7px; overflow-x: auto; padding-bottom: 10px; scrollbar-width: none; }
+.tool-tabs::-webkit-scrollbar { display: none; }
+.tool-tabs button, .panel-heading button, .button-row button, .tool-panel > button, fieldset > button, .field-grid button { min-height: 40px; padding: 8px 13px; border: 1px solid rgba(255,255,255,.12); border-radius: 12px; color: #fff; background: rgba(255,255,255,.07); white-space: nowrap; }
+.tool-tabs button.active { background: #6758ee; border-color: #8e84ff; }
+.tool-panel { display: none; padding: 8px 2px 2px; }
+.tool-panel.active { display: block; }
+.panel-heading { display: flex; justify-content: space-between; align-items: start; gap: 14px; margin-bottom: 12px; }
+.panel-heading h2 { margin: 0; font-size: 1.12rem; }
+.panel-heading p { margin: 4px 0 0; color: #9d9ba7; font-size: .86rem; }
+.button-row { display: flex; flex-wrap: wrap; gap: 7px; }
+.data-output { min-height: 90px; max-height: 320px; overflow: auto; margin: 0; padding: 12px; border-radius: 13px; background: rgba(0,0,0,.3); color: #d9d7e1; font: .76rem ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+#process-filter, .field-grid input, fieldset select { width: 100%; min-height: 42px; border: 1px solid rgba(255,255,255,.13); border-radius: 11px; background: rgba(255,255,255,.06); color: #fff; padding: 8px 11px; }
+.process-list { display: grid; gap: 6px; max-height: 420px; overflow: auto; margin-top: 9px; }
+.process-row { display: grid; grid-template-columns: 70px minmax(0,1fr) auto; gap: 9px; align-items: center; padding: 8px 10px; border-radius: 11px; background: rgba(255,255,255,.045); }
+.process-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.process-row small, .muted { color: #96949f; }
+.process-row button { min-height: 34px; border: 1px solid rgba(255,90,90,.25); border-radius: 9px; color: #ffaaaa; background: rgba(255,70,70,.08); }
+.metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px,1fr)); gap: 8px; margin-bottom: 10px; }
+.metric { padding: 11px; border-radius: 13px; background: rgba(255,255,255,.055); }
+.metric small, .metric strong { display: block; }
+.metric small { color: #9c9aa5; }
+.metric strong { margin-top: 4px; font-size: 1.2rem; }
+.battery-chart { width: 100%; min-height: 150px; border-radius: 13px; background: rgba(0,0,0,.24); }
+.insights { display: grid; gap: 6px; margin-top: 10px; color: #cbc9d3; font-size: .88rem; }
+.field-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+.field-grid label, fieldset label { display: grid; gap: 6px; color: #b9b7c1; font-size: .86rem; }
+.advanced-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin-bottom: 10px; }
+fieldset { display: grid; align-content: start; gap: 10px; min-width: 0; margin: 0; padding: 12px; border: 1px solid rgba(255,255,255,.1); border-radius: 13px; }
+legend { padding: 0 5px; color: #cbc9d3; font-weight: 700; }
 
 @media (max-width: 720px) {
   main { padding-left: 12px; padding-right: 12px; }
@@ -61,6 +92,10 @@ h1 { margin: 2px 0 0; font-size: clamp(1.6rem, 5vw, 2.45rem); letter-spacing: -.
   .viewer-panel { padding: 8px; border-radius: 20px; }
   .screen-shell { min-height: 54dvh; border-radius: 15px; }
   #screen { max-height: 66dvh; }
+  .panel-heading { display: grid; }
+  .advanced-grid { grid-template-columns: 1fr; }
+  .field-grid { grid-template-columns: 1fr; }
+  .process-row { grid-template-columns: 52px minmax(0,1fr) auto; }
 }
 
 @media (orientation: landscape) and (max-height: 600px) {

@@ -3,11 +3,20 @@ use std::{env, net::IpAddr, path::PathBuf, process::ExitCode, time::Duration};
 use idevice::{
     IdeviceError, ReadWrite, RsdService,
     core_device::{
-        ButtonState, CallInfoBlob, DisplayServiceClient, HevcDepacketizer, IndigoHidClient,
-        MainKeyboardService, OrientationServiceClient, RotationDirection, RtpPacket,
-        TOUCHSCREEN_STATE_CONTACT, TOUCHSCREEN_STATE_RELEASE, UniversalHidServiceClient,
+        AppServiceClient, ButtonState, CallInfoBlob, ConfigurationServiceClient,
+        DisplayServiceClient, HevcDepacketizer, IndigoHidClient, MainKeyboardService,
+        OrientationServiceClient, RotationDirection, RtpPacket, TOUCHSCREEN_STATE_CONTACT,
+        TOUCHSCREEN_STATE_RELEASE, UniversalHidServiceClient, UserInterfaceStyle,
         build_screen_audio_offer, build_screen_video_offer, build_start_audio_parameters,
         build_start_video_parameters,
+    },
+    diagnostics_relay::DiagnosticsRelayClient,
+    dvt::{
+        condition_inducer::ConditionInducerClient,
+        device_info::DeviceInfoClient,
+        location_simulation::LocationSimulationClient,
+        remote_server::RemoteServerClient,
+        sysmontap::{SysmontapClient, SysmontapConfig},
     },
     remote_pairing::{
         PeerDevice, RemotePairingClient, RpPairingFile, RpPairingSocket,
@@ -46,6 +55,17 @@ struct ControlCommand {
     x: Option<f64>,
     y: Option<f64>,
     text: Option<String>,
+    pid: Option<u32>,
+    signal: Option<u32>,
+    latitude: Option<f64>,
+    longitude: Option<f64>,
+    style: Option<String>,
+    enabled: Option<bool>,
+    value: Option<f64>,
+    size: Option<String>,
+    filter_type: Option<String>,
+    group_identifier: Option<String>,
+    profile_identifier: Option<String>,
 }
 
 struct MediaSession {
@@ -171,6 +191,26 @@ async fn stream(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> 
     let mut springboard = SpringBoardServicesClient::connect_rsd(&mut handle, &mut handshake)
         .await
         .ok();
+    let mut app_service = AppServiceClient::connect_rsd(&mut handle, &mut handshake).await?;
+    let mut configuration =
+        ConfigurationServiceClient::connect_rsd(&mut handle, &mut handshake).await?;
+    let mut diagnostics = DiagnosticsRelayClient::connect_rsd(&mut handle, &mut handshake).await?;
+
+    let mut dvt = RemoteServerClient::connect_rsd(&mut handle, &mut handshake).await?;
+    dvt.read_message(0).await?;
+
+    // Location simulation only remains active while its Instruments channel is alive.
+    // Give it a dedicated DVT connection so process and performance requests cannot
+    // invalidate the simulated location.
+    let mut location_dvt = RemoteServerClient::connect_rsd(&mut handle, &mut handshake).await?;
+    location_dvt.read_message(0).await?;
+    let mut location = LocationSimulationClient::new(&mut location_dvt).await?;
+
+    // Device conditions (network, thermal, CPU and other Xcode profiles) similarly
+    // keep their own long-lived channel.
+    let mut condition_dvt = RemoteServerClient::connect_rsd(&mut handle, &mut handshake).await?;
+    condition_dvt.read_message(0).await?;
+    let mut conditions = ConditionInducerClient::new(&mut condition_dvt).await?;
 
     let mut stdin_lines = BufReader::new(tokio::io::stdin()).lines();
     let mut output = tokio::io::stdout();
@@ -196,14 +236,33 @@ async fn stream(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> 
                 let Some(line) = line? else { break };
                 let command: ControlCommand = serde_json::from_str(&line)?;
                 if command.command == "stop" { break; }
-                handle_command(
+                let command_name = command.command.clone();
+                let result = handle_command(
                     command,
                     &mut universal_hid,
                     &mut main_keyboard,
                     &mut buttons,
                     &mut orientation,
                     &interface_orientation,
-                ).await?;
+                    &mut app_service,
+                    &mut configuration,
+                    &mut diagnostics,
+                    &mut dvt,
+                    &mut location,
+                    &mut conditions,
+                ).await;
+                match result {
+                    Ok(Some(event)) => write_event(&mut output, event).await?,
+                    Ok(None) => {}
+                    Err(error) => {
+                        write_event(&mut output, json!({
+                            "type": "commandResult",
+                            "command": command_name,
+                            "ok": false,
+                            "message": error.to_string()
+                        })).await?;
+                    }
+                }
             }
             _ = orientation_interval.tick() => {
                 if let Some(client) = springboard.as_mut()
@@ -292,13 +351,19 @@ async fn handle_command(
     buttons: &mut IndigoHidClient<Box<dyn ReadWrite>>,
     orientation: &mut OrientationServiceClient<Box<dyn ReadWrite>>,
     interface_orientation: &InterfaceOrientation,
-) -> Result<(), Box<dyn std::error::Error>> {
+    app_service: &mut AppServiceClient<Box<dyn ReadWrite>>,
+    configuration: &mut ConfigurationServiceClient<Box<dyn ReadWrite>>,
+    diagnostics: &mut DiagnosticsRelayClient,
+    dvt: &mut RemoteServerClient<Box<dyn ReadWrite>>,
+    location: &mut LocationSimulationClient<'_, Box<dyn ReadWrite>>,
+    conditions: &mut ConditionInducerClient<'_, Box<dyn ReadWrite>>,
+) -> Result<Option<serde_json::Value>, Box<dyn std::error::Error>> {
     match command.command.as_str() {
         "touch" => {
             let state = match command.phase.as_deref() {
                 Some("down" | "move") => TOUCHSCREEN_STATE_CONTACT,
                 Some("up") => TOUCHSCREEN_STATE_RELEASE,
-                _ => return Ok(()),
+                _ => return Ok(None),
             };
             let (x, y) = device_point(
                 command.x.unwrap_or(0.0),
@@ -334,9 +399,260 @@ async fn handle_command(
                 }
             }
         }
+        "processes" => {
+            let mut info = DeviceInfoClient::new(dvt).await?;
+            let processes = info.running_processes().await?;
+            return Ok(Some(json!({
+                "type": "processes",
+                "processes": processes.into_iter().map(|process| json!({
+                    "pid": process.pid,
+                    "name": process.name,
+                    "realAppName": process.real_app_name,
+                    "isApplication": process.is_application,
+                    "startPageCount": process.start_page_count
+                })).collect::<Vec<_>>()
+            })));
+        }
+        "killProcess" | "signalProcess" => {
+            let pid = command.pid.ok_or("process command requires pid")?;
+            let signal = if command.command == "killProcess" {
+                9
+            } else {
+                command.signal.unwrap_or(15)
+            };
+            app_service.send_signal(pid, signal).await?;
+            return Ok(Some(command_result(
+                &command.command,
+                json!({
+                    "pid": pid,
+                    "signal": signal
+                }),
+            )));
+        }
+        "battery" => {
+            let values = diagnostics.gasguage().await?.unwrap_or_default();
+            return Ok(Some(json!({ "type": "battery", "data": values })));
+        }
+        "diagnostics" => {
+            let values = diagnostics.all().await?.unwrap_or_default();
+            return Ok(Some(json!({ "type": "diagnostics", "data": values })));
+        }
+        "deviceInfo" => {
+            let mut info = DeviceInfoClient::new(dvt).await?;
+            let hardware = info.hardware_information().await?;
+            let network = info.network_information().await?;
+            let kernel = info.mach_kernel_name().await?;
+            return Ok(Some(json!({
+                "type": "deviceInfo",
+                "hardware": hardware,
+                "network": network,
+                "kernel": kernel
+            })));
+        }
+        "performance" => {
+            let (process_attributes, system_attributes) = {
+                let mut info = DeviceInfoClient::new(dvt).await?;
+                (
+                    info.sysmon_process_attributes().await?,
+                    info.sysmon_system_attributes().await?,
+                )
+            };
+            let mut monitor = SysmontapClient::new(dvt).await?;
+            monitor
+                .set_config(&SysmontapConfig {
+                    interval_ms: 750,
+                    process_attributes: process_attributes.clone(),
+                    system_attributes: system_attributes.clone(),
+                })
+                .await?;
+            monitor.start().await?;
+            let sample = monitor.next_sample().await?;
+            let _ = monitor.stop().await;
+            return Ok(Some(json!({
+                "type": "performance",
+                "processAttributes": process_attributes,
+                "systemAttributes": system_attributes,
+                "processes": sample.processes,
+                "system": sample.system,
+                "cpu": sample.system_cpu_usage
+            })));
+        }
+        "setLocation" => {
+            let latitude = command.latitude.ok_or("setLocation requires latitude")?;
+            let longitude = command.longitude.ok_or("setLocation requires longitude")?;
+            if !(-90.0..=90.0).contains(&latitude) || !(-180.0..=180.0).contains(&longitude) {
+                return Err("location coordinates are out of range".into());
+            }
+            location.set(latitude, longitude).await?;
+            return Ok(Some(command_result(
+                "setLocation",
+                json!({
+                    "latitude": latitude,
+                    "longitude": longitude
+                }),
+            )));
+        }
+        "clearLocation" => {
+            location.clear().await?;
+            return Ok(Some(command_result("clearLocation", json!({}))));
+        }
+        "configuration" => {
+            let style = configuration.get_user_interface_style().await.ok();
+            let color_filter = configuration.get_color_filter().await.ok();
+            let text_size = configuration.get_device_text_size().await.ok();
+            let reduce_motion = configuration.get_reduce_motion().await.ok();
+            let reduce_transparency = configuration.get_reduce_transparency().await.ok();
+            let show_borders = configuration.get_show_borders().await.ok();
+            return Ok(Some(json!({
+                "type": "configuration",
+                "appearance": style.map(|value| match value {
+                    UserInterfaceStyle::Light => "light",
+                    UserInterfaceStyle::Dark => "dark"
+                }),
+                "colorFilter": color_filter.map(|filter| json!({
+                    "enabled": filter.enabled,
+                    "type": filter.filter_type,
+                    "intensity": filter.intensity
+                })),
+                "textSize": text_size,
+                "reduceMotion": reduce_motion,
+                "reduceTransparency": reduce_transparency,
+                "showBorders": show_borders
+            })));
+        }
+        "setAppearance" => {
+            let style = match command.style.as_deref() {
+                Some("light") => UserInterfaceStyle::Light,
+                Some("dark") => UserInterfaceStyle::Dark,
+                _ => return Err("setAppearance requires light or dark".into()),
+            };
+            configuration.set_user_interface_style(style).await?;
+            return Ok(Some(command_result(
+                "setAppearance",
+                json!({ "style": command.style }),
+            )));
+        }
+        "setLiquidGlassOpacity" => {
+            let value = command
+                .value
+                .ok_or("setLiquidGlassOpacity requires value")?;
+            configuration.set_liquid_glass_opacity(value as f32).await?;
+            return Ok(Some(command_result(
+                "setLiquidGlassOpacity",
+                json!({ "value": value }),
+            )));
+        }
+        "setColorFilter" => {
+            let enabled = command.enabled.unwrap_or(false);
+            let intensity = command.value.map(|value| value as f32);
+            configuration
+                .set_color_filter(enabled, command.filter_type.as_deref(), intensity)
+                .await?;
+            return Ok(Some(command_result(
+                "setColorFilter",
+                json!({ "enabled": enabled }),
+            )));
+        }
+        "setTextSize" => {
+            let size = command.size.as_deref().ok_or("setTextSize requires size")?;
+            configuration.set_device_text_size(size).await?;
+            return Ok(Some(command_result("setTextSize", json!({ "size": size }))));
+        }
+        "setReduceMotion" => {
+            let enabled = command.enabled.ok_or("setReduceMotion requires enabled")?;
+            configuration.set_reduce_motion(enabled).await?;
+            return Ok(Some(command_result(
+                "setReduceMotion",
+                json!({ "enabled": enabled }),
+            )));
+        }
+        "setReduceTransparency" => {
+            let enabled = command
+                .enabled
+                .ok_or("setReduceTransparency requires enabled")?;
+            configuration.set_reduce_transparency(enabled).await?;
+            return Ok(Some(command_result(
+                "setReduceTransparency",
+                json!({ "enabled": enabled }),
+            )));
+        }
+        "setIncreaseContrast" => {
+            let enabled = command
+                .enabled
+                .ok_or("setIncreaseContrast requires enabled")?;
+            configuration.set_increase_contrast(enabled).await?;
+            return Ok(Some(command_result(
+                "setIncreaseContrast",
+                json!({ "enabled": enabled }),
+            )));
+        }
+        "setShowBorders" => {
+            let enabled = command.enabled.ok_or("setShowBorders requires enabled")?;
+            configuration.set_show_borders(enabled).await?;
+            return Ok(Some(command_result(
+                "setShowBorders",
+                json!({ "enabled": enabled }),
+            )));
+        }
+        "conditions" => {
+            let groups = conditions.available_conditions().await?;
+            return Ok(Some(json!({
+                "type": "conditions",
+                "groups": groups.into_iter().map(|group| json!({
+                    "identifier": group.identifier,
+                    "profiles": group.profiles.into_iter().map(|profile| json!({
+                        "identifier": profile.identifier,
+                        "description": profile.description
+                    })).collect::<Vec<_>>()
+                })).collect::<Vec<_>>()
+            })));
+        }
+        "enableCondition" => {
+            let group = command
+                .group_identifier
+                .as_deref()
+                .ok_or("enableCondition requires groupIdentifier")?;
+            let profile = command
+                .profile_identifier
+                .as_deref()
+                .ok_or("enableCondition requires profileIdentifier")?;
+            conditions.enable_condition(group, profile).await?;
+            return Ok(Some(command_result(
+                "enableCondition",
+                json!({
+                    "groupIdentifier": group,
+                    "profileIdentifier": profile
+                }),
+            )));
+        }
+        "disableCondition" => {
+            conditions.disable_condition().await?;
+            return Ok(Some(command_result("disableCondition", json!({}))));
+        }
+        "restart" => {
+            diagnostics.restart().await?;
+            return Ok(Some(command_result("restart", json!({}))));
+        }
+        "shutdown" => {
+            diagnostics.shutdown().await?;
+            return Ok(Some(command_result("shutdown", json!({}))));
+        }
+        "sleep" => {
+            diagnostics.sleep().await?;
+            return Ok(Some(command_result("sleep", json!({}))));
+        }
         _ => {}
     }
-    Ok(())
+    Ok(None)
+}
+
+fn command_result(command: &str, data: serde_json::Value) -> serde_json::Value {
+    json!({
+        "type": "commandResult",
+        "command": command,
+        "ok": true,
+        "data": data
+    })
 }
 
 async fn press_button(

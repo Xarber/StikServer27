@@ -15,6 +15,8 @@ let retryDelay = 500;
 let pointerDown = null;
 let knownDevices = [];
 let currentOrientation = "portrait";
+let runningProcesses = [];
+let latestBattery = null;
 
 function connect() {
   const scheme = location.protocol === "https:" ? "wss:" : "ws:";
@@ -43,6 +45,7 @@ function connect() {
         currentOrientation = message.event.orientation;
         applyScreenOrientation();
       }
+      handleDeviceEvent(message.event);
     }
     if (message.type === "error") showStatus(message.message, false);
   };
@@ -93,6 +96,10 @@ function selectDevice(id) {
   for (const button of devicesElement.children) {
     button.classList.toggle("selected", button.dataset.deviceId === id);
   }
+  runningProcesses = [];
+  latestBattery = null;
+  renderProcesses();
+  renderBatteryHistory();
 }
 
 function displayFrame(blob) {
@@ -220,6 +227,243 @@ function handlePairing(message) {
 function showStatus(message, online) {
   status.textContent = message;
   status.classList.toggle("online", online);
+}
+
+function command(command, fields = {}) {
+  if (!selectedDevice) return showStatus("Choose a device first", false);
+  send({ type: "command", deviceId: selectedDevice, command, ...fields });
+}
+
+function handleDeviceEvent(event) {
+  if (!event?.type || event.type === "orientation" || event.type === "ready") return;
+  if (event.type === "processes") {
+    runningProcesses = event.processes || [];
+    renderProcesses();
+  } else if (event.type === "battery") {
+    latestBattery = batteryMeasurement(event.data || {});
+    saveBatteryMeasurement(latestBattery);
+    renderBatteryHistory();
+  } else if (event.type === "conditions") {
+    renderConditions(event.groups || []);
+    document.querySelector("#advanced-output").textContent = pretty(event);
+  } else if (event.type === "configuration") {
+    applyConfiguration(event);
+    document.querySelector("#advanced-output").textContent = pretty(event);
+  } else if (["deviceInfo", "performance", "diagnostics"].includes(event.type)) {
+    document.querySelector("#overview-output").textContent = pretty(event);
+  } else if (event.type === "commandResult") {
+    showStatus(event.ok ? `${event.command} completed` : event.message || `${event.command} failed`, event.ok);
+    if (event.ok && ["killProcess", "signalProcess"].includes(event.command)) command("processes");
+  }
+}
+
+function pretty(value) {
+  return JSON.stringify(value, null, 2);
+}
+
+document.querySelectorAll("[data-tool-tab]").forEach(button => {
+  button.addEventListener("click", () => {
+    document.querySelectorAll("[data-tool-tab]").forEach(item => item.classList.toggle("active", item === button));
+    document.querySelectorAll("[data-tool-panel]").forEach(panel => panel.classList.toggle("active", panel.dataset.toolPanel === button.dataset.toolTab));
+  });
+});
+
+document.querySelectorAll("[data-action]").forEach(button => {
+  button.addEventListener("click", () => command(button.dataset.action));
+});
+
+document.querySelector("#process-filter").addEventListener("input", renderProcesses);
+
+function renderProcesses() {
+  const list = document.querySelector("#process-list");
+  const query = document.querySelector("#process-filter").value.trim().toLowerCase();
+  const matches = runningProcesses.filter(process => `${process.pid} ${process.name} ${process.realAppName}`.toLowerCase().includes(query));
+  list.replaceChildren();
+  if (!matches.length) {
+    const emptyRow = document.createElement("p");
+    emptyRow.className = "muted";
+    emptyRow.textContent = runningProcesses.length ? "No matching processes." : "Load the running process list to begin.";
+    list.append(emptyRow);
+    return;
+  }
+  for (const process of matches) {
+    const row = document.createElement("div");
+    row.className = "process-row";
+    const pid = document.createElement("small");
+    pid.textContent = String(process.pid);
+    const name = document.createElement("span");
+    name.textContent = process.realAppName || process.name || "Unknown process";
+    name.title = process.name || "";
+    const terminate = document.createElement("button");
+    terminate.type = "button";
+    terminate.textContent = "Terminate";
+    terminate.addEventListener("click", () => {
+      if (window.confirm(`Terminate ${name.textContent} (${process.pid})?`)) command("killProcess", { pid: process.pid });
+    });
+    row.append(pid, name, terminate);
+    list.append(row);
+  }
+}
+
+document.querySelector("#location-form").addEventListener("submit", event => {
+  event.preventDefault();
+  command("setLocation", {
+    latitude: Number(document.querySelector("#latitude").value),
+    longitude: Number(document.querySelector("#longitude").value)
+  });
+});
+document.querySelector("#clear-location").addEventListener("click", () => command("clearLocation"));
+
+document.querySelectorAll("[data-command-value]").forEach(button => {
+  button.addEventListener("click", () => {
+    const [name, value] = button.dataset.commandValue.split(":");
+    command(name, { style: value });
+  });
+});
+document.querySelectorAll("[data-toggle-command]").forEach(input => {
+  input.addEventListener("change", () => command(input.dataset.toggleCommand, { enabled: input.checked }));
+});
+document.querySelector("#apply-text-size").addEventListener("click", () => command("setTextSize", { size: document.querySelector("#text-size").value }));
+document.querySelector("#apply-glass").addEventListener("click", () => command("setLiquidGlassOpacity", { value: Number(document.querySelector("#glass-opacity").value) }));
+document.querySelector("#enable-condition").addEventListener("click", () => {
+  const value = document.querySelector("#condition-profile").value;
+  if (!value) return showStatus("Choose a condition profile", false);
+  const [groupIdentifier, profileIdentifier] = value.split("\u0000");
+  command("enableCondition", { groupIdentifier, profileIdentifier });
+});
+document.querySelector("#disable-condition").addEventListener("click", () => command("disableCondition"));
+document.querySelectorAll("[data-danger-command]").forEach(button => {
+  button.addEventListener("click", () => {
+    const action = button.dataset.dangerCommand;
+    if (window.confirm(`${button.textContent} the selected device now?`)) command(action);
+  });
+});
+
+function applyConfiguration(configuration) {
+  if (configuration.textSize) document.querySelector("#text-size").value = configuration.textSize;
+  const toggles = {
+    setReduceMotion: configuration.reduceMotion,
+    setReduceTransparency: configuration.reduceTransparency,
+    setShowBorders: configuration.showBorders
+  };
+  for (const [name, value] of Object.entries(toggles)) {
+    const input = document.querySelector(`[data-toggle-command="${name}"]`);
+    if (input && typeof value === "boolean") input.checked = value;
+  }
+}
+
+function renderConditions(groups) {
+  const select = document.querySelector("#condition-profile");
+  select.replaceChildren(new Option("Choose a condition profile", ""));
+  for (const group of groups) {
+    const optionGroup = document.createElement("optgroup");
+    optionGroup.label = group.identifier;
+    for (const profile of group.profiles || []) {
+      optionGroup.append(new Option(profile.description || profile.identifier, `${group.identifier}\u0000${profile.identifier}`));
+    }
+    select.append(optionGroup);
+  }
+}
+
+function batteryHistoryKey() {
+  return `stikserver-battery-${selectedDevice || "none"}`;
+}
+
+function batteryHistory() {
+  try { return JSON.parse(localStorage.getItem(batteryHistoryKey()) || "[]"); }
+  catch { return []; }
+}
+
+function saveBatteryMeasurement(measurement) {
+  if (!selectedDevice || !measurement || Object.values(measurement).every(value => value == null)) return;
+  const history = batteryHistory();
+  history.push({ ...measurement, date: new Date().toISOString() });
+  localStorage.setItem(batteryHistoryKey(), JSON.stringify(history.slice(-500)));
+}
+
+function batteryMeasurement(data) {
+  const entries = [];
+  const walk = value => {
+    if (!value || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value)) {
+      if (typeof child === "number") entries.push([key.toLowerCase(), child]);
+      else walk(child);
+    }
+  };
+  walk(data);
+  const number = (...names) => entries.find(([key]) => names.some(name => key === name.toLowerCase()))?.[1] ?? null;
+  const cycles = number("CycleCount", "cycle_count", "last_value_CycleCount");
+  const full = number("FullChargeCapacity", "AppleRawMaxCapacity", "NominalChargeCapacity");
+  const design = number("DesignCapacity", "AppleRawDesignCapacity");
+  const reported = number("MaximumCapacityPercent", "BatteryHealthMetric", "StateOfHealth");
+  const health = reported ?? (full != null && full <= 100 ? full : full != null && design ? full / design * 100 : null);
+  let temperature = number("Temperature", "BatteryTemperature", "VirtualTemperature");
+  if (temperature != null && temperature > 1000) temperature /= 100;
+  else if (temperature != null && temperature > 100) temperature /= 10;
+  return { health: finite(health), cycles: finite(cycles), temperature: finite(temperature), fullCapacity: finite(full), designCapacity: finite(design) };
+}
+
+function finite(value) {
+  return Number.isFinite(value) ? value : null;
+}
+
+function renderBatteryHistory() {
+  const history = selectedDevice ? batteryHistory() : [];
+  const latest = latestBattery || history.at(-1) || {};
+  const metrics = document.querySelector("#battery-metrics");
+  metrics.replaceChildren();
+  for (const [label, value] of [
+    ["Health", latest.health == null ? "—" : `${latest.health.toFixed(1)}%`],
+    ["Cycles", latest.cycles == null ? "—" : Math.round(latest.cycles)],
+    ["Temperature", latest.temperature == null ? "—" : `${latest.temperature.toFixed(1)} °C`],
+    ["Measurements", history.length]
+  ]) {
+    const card = document.createElement("div");
+    card.className = "metric";
+    const small = document.createElement("small"); small.textContent = label;
+    const strong = document.createElement("strong"); strong.textContent = String(value);
+    card.append(small, strong); metrics.append(card);
+  }
+  renderBatteryChart(history);
+  renderBatteryInsights(history);
+}
+
+function renderBatteryChart(history) {
+  const svg = document.querySelector("#battery-chart");
+  svg.replaceChildren();
+  const points = history.filter(item => Number.isFinite(item.health));
+  if (points.length < 2) {
+    const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    label.setAttribute("x", "300"); label.setAttribute("y", "92"); label.setAttribute("text-anchor", "middle"); label.setAttribute("fill", "#888693");
+    label.textContent = "Record at least two measurements to show a health trend";
+    svg.append(label); return;
+  }
+  const min = Math.min(70, ...points.map(point => point.health)) - 2;
+  const max = Math.max(100, ...points.map(point => point.health)) + 2;
+  const coordinates = points.map((point, index) => {
+    const x = 24 + index / (points.length - 1) * 552;
+    const y = 156 - (point.health - min) / Math.max(1, max - min) * 132;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+  line.setAttribute("points", coordinates); line.setAttribute("fill", "none"); line.setAttribute("stroke", "#7d73ff"); line.setAttribute("stroke-width", "4"); line.setAttribute("stroke-linecap", "round"); line.setAttribute("stroke-linejoin", "round");
+  svg.append(line);
+}
+
+function renderBatteryInsights(history) {
+  const element = document.querySelector("#battery-insights");
+  element.replaceChildren();
+  const health = history.filter(item => Number.isFinite(item.health));
+  const messages = [];
+  if (health.length > 1) {
+    const change = health.at(-1).health - health[0].health;
+    messages.push(`Maximum capacity changed by ${change >= 0 ? "+" : ""}${change.toFixed(1)} points across ${health.length} measurements.`);
+    const cycleDelta = health.at(-1).cycles - health[0].cycles;
+    if (Number.isFinite(cycleDelta) && cycleDelta > 0) messages.push(`Observed change: ${(change / cycleDelta * 100).toFixed(2)} points per 100 cycles.`);
+  } else messages.push("More measurements are needed before StikServer can calculate a trend.");
+  const temperatures = history.map(item => item.temperature).filter(Number.isFinite);
+  if (temperatures.length) messages.push(Math.max(...temperatures) >= 35 ? "At least one warm battery measurement was recorded." : "Recorded battery temperatures stayed below 35 °C.");
+  for (const message of messages) { const row = document.createElement("div"); row.textContent = message; element.append(row); }
 }
 
 connect();
