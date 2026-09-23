@@ -21,7 +21,7 @@
       <section class="layout">
         <aside class="devices-panel">
           <div id="devices" class="devices"></div>
-          <p id="empty" class="empty">Waiting for a StikDebug device…</p>
+          <p id="empty" class="empty">Searching the local network for iPhone and iPad devices…</p>
         </aside>
 
         <section class="viewer-panel">
@@ -39,6 +39,22 @@
             <button data-command="volumeUp" aria-label="Volume up">＋</button>
             <button data-command="softwareKeyboard" class="half">Keyboard</button>
             <button id="fullscreen" class="half">Fullscreen</button>
+            <button id="pair" class="wide" hidden>Pair with StikServer</button>
+            <form id="text-input" class="text-input">
+              <input id="text" type="text" autocomplete="off" placeholder="Type on the device" aria-label="Text to type on device">
+              <button type="button" data-command="backspace" aria-label="Backspace">⌫</button>
+              <button type="submit">Send</button>
+            </form>
+            <details class="more-controls">
+              <summary>More controls</summary>
+              <div>
+                <button data-command="mute">Mute</button>
+                <button data-command="siri">Siri</button>
+                <button data-command="rotateLeft">Rotate left</button>
+                <button data-command="rotateRight">Rotate right</button>
+                <button id="screenshot" type="button">Save screenshot</button>
+              </div>
+            </details>
           </div>
         </section>
       </section>

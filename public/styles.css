@@ -29,6 +29,8 @@ h1 { margin: 2px 0 0; font-size: clamp(1.6rem, 5vw, 2.45rem); letter-spacing: -.
 .devices { display: grid; gap: 8px; }
 .device { width: 100%; display: grid; grid-template-columns: 42px 1fr; gap: 11px; align-items: center; padding: 10px; border: 0; border-radius: 16px; color: inherit; background: transparent; text-align: left; }
 .device:hover, .device.selected { background: rgba(255,255,255,.1); }
+.device:disabled { opacity: .7; cursor: not-allowed; }
+.device:disabled:hover { background: transparent; }
 .device-icon { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 13px; background: linear-gradient(145deg, #6e62ff, #2999e8); font-size: 1.2rem; }
 .device strong, .device small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .device small { margin-top: 3px; color: #a8a6b1; }
@@ -41,6 +43,13 @@ h1 { margin: 2px 0 0; font-size: clamp(1.6rem, 5vw, 2.45rem); letter-spacing: -.
 .controls button { min-height: 48px; border: 1px solid rgba(255,255,255,.12); border-radius: 14px; background: rgba(255,255,255,.08); color: #fff; }
 .controls button:active { transform: scale(.96); background: rgba(255,255,255,.16); }
 .controls .half { grid-column: span 2; }
+.controls .wide { grid-column: 1 / -1; }
+.text-input { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) 52px 70px; gap: 8px; }
+.text-input input { min-width: 0; border: 1px solid rgba(255,255,255,.12); border-radius: 14px; background: rgba(255,255,255,.06); color: #fff; padding: 0 14px; font: inherit; }
+.text-input input::placeholder { color: #888693; }
+.more-controls { grid-column: 1 / -1; border: 1px solid rgba(255,255,255,.1); border-radius: 14px; background: rgba(255,255,255,.04); }
+.more-controls summary { padding: 13px 14px; cursor: pointer; color: #d8d7df; }
+.more-controls > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; padding: 0 8px 8px; }
 
 @media (max-width: 720px) {
   main { padding-left: 12px; padding-right: 12px; }

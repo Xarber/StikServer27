@@ -3,6 +3,8 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
+import { RemotePairingDiscovery } from "./discovery.mjs";
+import { NativeDeviceManager } from "./native-manager.mjs";
 
 const host = process.env.STIKSERVER_HOST || "127.0.0.1";
 const port = Number(process.env.STIKSERVER_PORT || 8765);
@@ -10,6 +12,10 @@ const token = process.env.STIKSERVER_TOKEN || "";
 const publicRoot = fileURLToPath(new URL("./public/", import.meta.url));
 const agents = new Map();
 const viewers = new Set();
+const discovery = new RemotePairingDiscovery();
+const nativeDevices = new NativeDeviceManager();
+let directDevices = [];
+let rawDirectDevices = [];
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -30,7 +36,12 @@ function authorized(requestURL) {
 }
 
 function deviceList() {
-  return [...agents.values()].map(({ metadata }) => metadata);
+  const relayed = [...agents.values()].map(({ metadata }) => metadata);
+  const activeServiceIdentifiers = new Set(relayed.map(device => device.serviceIdentifier).filter(Boolean));
+  return [
+    ...relayed,
+    ...directDevices.filter(device => !activeServiceIdentifiers.has(device.serviceIdentifier))
+  ];
 }
 
 function sendJSON(peer, value) {
@@ -167,7 +178,9 @@ class WebSocketPeer {
         kind: String(message.device.kind || "iPhone"),
         width: Number(message.device.width || 0),
         height: Number(message.device.height || 0),
-        connected: true
+        connected: true,
+        controllable: true,
+        mode: "relay"
       };
       agents.set(id, { peer: this, metadata });
       sendJSON(this, { type: "registered", deviceId: id });
@@ -186,15 +199,48 @@ class WebSocketPeer {
   viewerMessage(message) {
     if (message.type === "subscribe") {
       const id = String(message.deviceId || "");
-      this.subscription = agents.has(id) ? id : null;
-      sendJSON(this, { type: "subscribed", deviceId: this.subscription });
+      if (agents.has(id)) {
+        this.subscription = id;
+        sendJSON(this, { type: "subscribed", deviceId: id });
+        return;
+      }
+      const direct = directDevices.find(device => device.id === id && device.controllable);
+      if (!direct) {
+        this.subscription = null;
+        sendJSON(this, { type: "subscribed", deviceId: null });
+        return;
+      }
+      nativeDevices.start(direct).then(() => {
+        if (this.closed) return;
+        this.subscription = id;
+        sendJSON(this, { type: "subscribed", deviceId: id });
+        refreshDirectDevices();
+      }).catch(error => sendJSON(this, { type: "error", message: error.message }));
       return;
     }
     if (message.type === "command") {
       const id = String(message.deviceId || this.subscription || "");
       const agent = agents.get(id)?.peer;
-      if (!agent) return sendJSON(this, { type: "error", message: "Device is offline" });
+      if (!agent) {
+        const direct = directDevices.find(device => device.id === id);
+        if (!direct) return sendJSON(this, { type: "error", message: "Device is offline" });
+        try { nativeDevices.send(id, message); }
+        catch (error) { sendJSON(this, { type: "error", message: error.message }); }
+        return;
+      }
       sendJSON(agent, { ...message, deviceId: id });
+      return;
+    }
+    if (message.type === "pair") {
+      const id = String(message.deviceId || "");
+      const direct = directDevices.find(device => device.id === id);
+      if (!direct) return sendJSON(this, { type: "error", message: "Device is no longer available" });
+      nativeDevices.startPairing(direct).catch(error => sendJSON(this, { type: "error", message: error.message }));
+      return;
+    }
+    if (message.type === "pairPin") {
+      try { nativeDevices.submitPairingPin(String(message.deviceId || ""), String(message.pin || "")); }
+      catch (error) { sendJSON(this, { type: "error", message: error.message }); }
     }
   }
 
@@ -228,7 +274,13 @@ const server = createServer(async (request, response) => {
     let pathname = decodeURIComponent(requestURL.pathname);
     if (pathname === "/health") {
       response.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-      response.end(JSON.stringify({ ok: true, devices: agents.size }));
+      response.end(JSON.stringify({
+        ok: true,
+        controllableDevices: agents.size,
+        discoveredDevices: directDevices.length,
+        viewers: viewers.size,
+        native: nativeDevices.availability()
+      }));
       return;
     }
     if (pathname === "/") pathname = "/index.html";
@@ -277,4 +329,51 @@ server.listen(port, host, () => {
   const access = host === "0.0.0.0" ? "this computer's Tailscale/private IP" : host;
   console.log(`StikServer listening on http://${access}:${port}`);
   if (!token) console.warn("STIKSERVER_TOKEN is unset; only use this on a trusted private network.");
+  nativeDevices.initialize()
+    .then(() => refreshDirectDevices())
+    .catch(error => console.warn(`Native backend: ${error.message}`));
+  discovery.start();
 });
+
+discovery.on("changed", devices => {
+  rawDirectDevices = devices;
+  refreshDirectDevices();
+});
+discovery.on("error", error => console.warn(`Device discovery: ${error.message}`));
+nativeDevices.on("frame", (deviceId, frame) => {
+  for (const viewer of viewers) {
+    if (viewer.subscription === deviceId) viewer.send(frame);
+  }
+});
+nativeDevices.on("event", (deviceId, event) => {
+  for (const viewer of viewers) {
+    if (viewer.subscription === deviceId) sendJSON(viewer, { type: "deviceEvent", deviceId, event });
+  }
+});
+nativeDevices.on("session", () => refreshDirectDevices());
+nativeDevices.on("availability", () => refreshDirectDevices());
+nativeDevices.on("pairing", (deviceId, pairing) => {
+  for (const viewer of viewers) sendJSON(viewer, { type: "pairing", deviceId, pairing });
+  if (pairing.state === "ready" || pairing.state === "paired") refreshDirectDevices();
+});
+nativeDevices.on("log", (deviceId, message) => {
+  if (message) console.log(`[${deviceId}] ${message}`);
+});
+nativeDevices.on("error", error => console.warn(`Native backend: ${error.message}`));
+
+let directRefreshGeneration = 0;
+async function refreshDirectDevices() {
+  const generation = ++directRefreshGeneration;
+  const descriptions = await Promise.all(rawDirectDevices.map(device => nativeDevices.describe(device)));
+  if (generation !== directRefreshGeneration) return;
+  directDevices = descriptions;
+  publishDevices();
+}
+
+function shutdown() {
+  discovery.stop();
+  nativeDevices.stopAll();
+  server.close(() => process.exit(0));
+}
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);

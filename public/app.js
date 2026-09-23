@@ -4,6 +4,7 @@ const empty = document.querySelector("#empty");
 const screen = document.querySelector("#screen");
 const placeholder = document.querySelector("#placeholder");
 const shell = document.querySelector("#screen-shell");
+const pairButton = document.querySelector("#pair");
 const token = new URLSearchParams(location.search).get("token") || localStorage.getItem("stikserver-token") || "";
 if (token) localStorage.setItem("stikserver-token", token);
 
@@ -12,6 +13,8 @@ let selectedDevice = null;
 let currentFrameURL = null;
 let retryDelay = 500;
 let pointerDown = null;
+let knownDevices = [];
+let currentOrientation = "portrait";
 
 function connect() {
   const scheme = location.protocol === "https:" ? "wss:" : "ws:";
@@ -34,6 +37,14 @@ function connect() {
     if (event.data instanceof Blob) return displayFrame(event.data);
     const message = JSON.parse(event.data);
     if (message.type === "devices") renderDevices(message.devices);
+    if (message.type === "pairing") handlePairing(message);
+    if (message.type === "deviceEvent" && message.deviceId === selectedDevice) {
+      if (message.event?.type === "orientation") {
+        currentOrientation = message.event.orientation;
+        applyScreenOrientation();
+      }
+    }
+    if (message.type === "error") showStatus(message.message, false);
   };
 }
 
@@ -42,6 +53,7 @@ function send(value) {
 }
 
 function renderDevices(devices) {
+  knownDevices = devices;
   devicesElement.replaceChildren();
   empty.hidden = devices.length > 0;
   if (selectedDevice && !devices.some(device => device.id === selectedDevice)) selectDevice(null);
@@ -51,7 +63,10 @@ function renderDevices(devices) {
     button.dataset.deviceId = device.id;
     button.innerHTML = `<span class="device-icon">${device.kind === "iPad" ? "▭" : "▯"}</span><span><strong></strong><small></small></span>`;
     button.querySelector("strong").textContent = device.name;
-    button.querySelector("small").textContent = `${device.kind} · Connected`;
+    button.querySelector("small").textContent = device.controllable
+      ? `${device.kind} · Ready`
+      : `${device.kind} · Discovered locally`;
+    if (!device.controllable) button.title = device.backendMessage || "Pair this device with StikServer";
     button.addEventListener("click", () => selectDevice(device.id));
     devicesElement.append(button);
   }
@@ -59,8 +74,18 @@ function renderDevices(devices) {
 
 function selectDevice(id) {
   selectedDevice = id;
-  send({ type: "subscribe", deviceId: id });
-  placeholder.hidden = Boolean(id);
+  currentOrientation = "portrait";
+  applyScreenOrientation();
+  const device = knownDevices.find(candidate => candidate.id === id);
+  send({ type: "subscribe", deviceId: device?.controllable ? id : null });
+  placeholder.hidden = Boolean(device?.controllable);
+  pairButton.hidden = !device || device.mode !== "direct" || device.paired;
+  if (device && !device.controllable) {
+    placeholder.hidden = false;
+    placeholder.querySelector("span").textContent = device.backendMessage || "Pair this device to control it";
+  } else {
+    placeholder.querySelector("span").textContent = id ? "Connecting to device…" : "Choose a connected device";
+  }
   if (!id) {
     screen.style.display = "none";
     screen.removeAttribute("src");
@@ -76,15 +101,20 @@ function displayFrame(blob) {
   screen.onload = () => {
     if (currentFrameURL) URL.revokeObjectURL(currentFrameURL);
     currentFrameURL = nextURL;
+    applyScreenOrientation();
   };
   screen.src = nextURL;
   screen.style.display = "block";
   placeholder.hidden = true;
+  applyScreenOrientation();
 }
 
 function normalizedPoint(event) {
   const imageRect = screen.getBoundingClientRect();
-  const naturalRatio = (screen.naturalWidth || imageRect.width) / (screen.naturalHeight || imageRect.height);
+  const landscape = currentOrientation === "landscapeLeft" || currentOrientation === "landscapeRight";
+  const naturalWidth = landscape ? screen.naturalHeight : screen.naturalWidth;
+  const naturalHeight = landscape ? screen.naturalWidth : screen.naturalHeight;
+  const naturalRatio = (naturalWidth || imageRect.width) / (naturalHeight || imageRect.height);
   const boxRatio = imageRect.width / imageRect.height;
   let width = imageRect.width;
   let height = imageRect.height;
@@ -102,6 +132,23 @@ function normalizedPoint(event) {
     y: Math.max(0, Math.min(1, (event.clientY - top) / height))
   };
 }
+
+function applyScreenOrientation() {
+  const landscape = currentOrientation === "landscapeLeft" || currentOrientation === "landscapeRight";
+  if (landscape) {
+    screen.style.width = `${shell.clientHeight}px`;
+    screen.style.height = `${shell.clientWidth}px`;
+    screen.style.maxHeight = "none";
+    screen.style.transform = currentOrientation === "landscapeRight" ? "rotate(90deg)" : "rotate(-90deg)";
+  } else {
+    screen.style.width = "100%";
+    screen.style.height = "100%";
+    screen.style.maxHeight = "";
+    screen.style.transform = currentOrientation === "portraitUpsideDown" ? "rotate(180deg)" : "none";
+  }
+}
+
+window.addEventListener("resize", applyScreenOrientation);
 
 shell.addEventListener("pointerdown", event => {
   if (!selectedDevice || screen.style.display === "none") return;
@@ -128,6 +175,14 @@ document.querySelectorAll("[data-command]").forEach(button => {
   }));
 });
 
+document.querySelector("#text-input").addEventListener("submit", event => {
+  event.preventDefault();
+  const input = document.querySelector("#text");
+  if (!selectedDevice || !input.value) return;
+  send({ type: "command", deviceId: selectedDevice, command: "text", text: input.value });
+  input.value = "";
+});
+
 document.querySelector("#fullscreen").addEventListener("click", async () => {
   try {
     if (document.fullscreenElement) await document.exitFullscreen();
@@ -136,5 +191,35 @@ document.querySelector("#fullscreen").addEventListener("click", async () => {
     // Some mobile browsers only permit fullscreen video; the responsive layout remains usable.
   }
 });
+
+document.querySelector("#screenshot").addEventListener("click", () => {
+  if (!currentFrameURL) return;
+  const link = document.createElement("a");
+  link.href = currentFrameURL;
+  link.download = `stikserver-${selectedDevice || "device"}-${new Date().toISOString().replaceAll(":", "-")}.jpg`;
+  link.click();
+});
+
+pairButton.addEventListener("click", () => {
+  if (selectedDevice) send({ type: "pair", deviceId: selectedDevice });
+});
+
+function handlePairing(message) {
+  if (message.deviceId !== selectedDevice) return;
+  const pairing = message.pairing;
+  if (pairing.state === "pinRequired") {
+    const pin = window.prompt("Enter the PIN shown on the iPhone or iPad:");
+    if (pin) send({ type: "pairPin", deviceId: selectedDevice, pin: pin.trim() });
+  } else if (pairing.state === "failed") {
+    showStatus(pairing.message || "Pairing failed", false);
+  } else {
+    showStatus(`Pairing: ${pairing.state}`, pairing.state === "ready");
+  }
+}
+
+function showStatus(message, online) {
+  status.textContent = message;
+  status.classList.toggle("online", online);
+}
 
 connect();
