@@ -37,7 +37,10 @@ jobs:
           set -o pipefail
           if ! output=$(cargo check --manifest-path native/Cargo.toml 2>&1); then
             printf '%s\n' "$output"
-            errors=$(printf '%s\n' "$output" | tail -n 180)
+            errors=$(printf '%s\n' "$output" \
+              | sed -E $'s/\\x1B\\[[0-9;]*[mK]//g' \
+              | awk '/^error(\\[|:)/ { showing=1; remaining=24 } showing { print; remaining-- } remaining==0 { showing=0 }' \
+              | tail -n 160)
             errors=${errors//'%'/'%25'}
             errors=${errors//$'\n'/'%0A'}
             errors=${errors//$'\r'/'%0D'}
