@@ -210,6 +210,16 @@ document.querySelector("#screenshot").addEventListener("click", () => {
   link.click();
 });
 
+document.querySelector("#disconnect-device").addEventListener("click", () => {
+  send({ type: "unsubscribe" });
+  if (currentFrameURL) URL.revokeObjectURL(currentFrameURL);
+  currentFrameURL = null;
+  screen.style.display = "none";
+  screen.removeAttribute("src");
+  placeholder.hidden = false;
+  placeholder.querySelector("span").textContent = "Disconnected. Choose the device again to reconnect.";
+});
+
 pairButton.addEventListener("click", () => {
   if (selectedDevice) send({ type: "pair", deviceId: selectedDevice });
 });

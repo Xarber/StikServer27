@@ -65,6 +65,7 @@ class WebSocketPeer {
     this.closed = false;
     this.deviceId = null;
     this.subscription = null;
+    this.subscriptionRequest = 0;
     socket.on("data", chunk => this.receive(chunk));
     socket.on("close", () => this.finish());
     socket.on("error", () => this.finish());
@@ -200,24 +201,40 @@ class WebSocketPeer {
 
   viewerMessage(message) {
     if (message.type === "subscribe") {
+      const requestNumber = ++this.subscriptionRequest;
+      const previousSubscription = this.subscription;
       const id = String(message.deviceId || "");
       if (agents.has(id)) {
         this.subscription = id;
         sendJSON(this, { type: "subscribed", deviceId: id });
+        stopDirectIfUnused(previousSubscription);
         return;
       }
       const direct = directDevices.find(device => device.id === id && device.controllable);
       if (!direct) {
         this.subscription = null;
         sendJSON(this, { type: "subscribed", deviceId: null });
+        stopDirectIfUnused(previousSubscription);
         return;
       }
       nativeDevices.start(direct).then(() => {
-        if (this.closed) return;
+        if (this.closed || this.subscriptionRequest !== requestNumber) {
+          stopDirectIfUnused(id);
+          return;
+        }
         this.subscription = id;
         sendJSON(this, { type: "subscribed", deviceId: id });
+        stopDirectIfUnused(previousSubscription);
         refreshDirectDevices();
       }).catch(error => sendJSON(this, { type: "error", message: error.message }));
+      return;
+    }
+    if (message.type === "unsubscribe") {
+      this.subscriptionRequest += 1;
+      const previousSubscription = this.subscription;
+      this.subscription = null;
+      sendJSON(this, { type: "subscribed", deviceId: null });
+      stopDirectIfUnused(previousSubscription);
       return;
     }
     if (message.type === "command") {
@@ -268,13 +285,22 @@ class WebSocketPeer {
   finish() {
     if (this.closed && !viewers.has(this) && !this.deviceId) return;
     this.closed = true;
+    const previousSubscription = this.subscription;
     viewers.delete(this);
     if (this.deviceId && agents.get(this.deviceId)?.peer === this) {
       agents.delete(this.deviceId);
       publishDevices();
     }
     this.deviceId = null;
+    this.subscription = null;
+    stopDirectIfUnused(previousSubscription);
   }
+}
+
+function stopDirectIfUnused(deviceId) {
+  if (!deviceId || agents.has(deviceId)) return;
+  if ([...viewers].some(viewer => !viewer.closed && viewer.subscription === deviceId)) return;
+  nativeDevices.stop(deviceId);
 }
 
 const server = createServer(async (request, response) => {
