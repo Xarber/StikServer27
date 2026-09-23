@@ -37,16 +37,12 @@
             <button data-command="home" aria-label="Home">●</button>
             <button data-command="lock" aria-label="Lock">⌁</button>
             <button data-command="volumeUp" aria-label="Volume up">＋</button>
-            <button data-command="softwareKeyboard" class="half">Keyboard</button>
+            <button data-command="softwareKeyboard" class="half">Toggle software keyboard</button>
             <button id="fullscreen" class="half">Fullscreen</button>
             <button id="pair" class="wide" hidden>Pair with StikServer</button>
             <button id="import-pairing" class="wide" hidden>Import pairing file</button>
             <input id="pairing-file" type="file" accept=".plist,application/x-plist,application/xml,text/xml" hidden>
-            <form id="text-input" class="text-input">
-              <input id="text" type="text" autocomplete="off" placeholder="Type on the device" aria-label="Text to type on device">
-              <button type="button" data-command="backspace" aria-label="Backspace">⌫</button>
-              <button type="submit">Send</button>
-            </form>
+            <label class="live-input"><span>Live keyboard input</span><textarea id="live-text" rows="1" autocomplete="off" autocapitalize="sentences" spellcheck="false" placeholder="Tap here, then type directly on the device" aria-label="Type directly on the remote device"></textarea></label>
             <details class="more-controls">
               <summary>More controls</summary>
               <div>
@@ -58,6 +54,11 @@
                 <button id="disconnect-device" type="button">Disconnect</button>
               </div>
             </details>
+          </div>
+
+          <div id="desktop-actions" class="desktop-actions" hidden>
+            <span>StikServer is running on this computer.</span>
+            <button id="copy-remote-link" type="button">Copy remote access link</button>
           </div>
 
           <section class="toolbox" aria-label="Device tools">

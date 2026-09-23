@@ -1,0 +1,61 @@
+name: Build desktop app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - battery-history.mjs
+      - desktop/**
+      - discovery.mjs
+      - electron-builder.config.cjs
+      - native/**
+      - native-manager.mjs
+      - package.json
+      - package-lock.json
+      - public/**
+      - server.mjs
+      - .github/workflows/build-desktop.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            artifact: StikServer-macOS
+            package: dist/*.zip
+          - runner: windows-latest
+            artifact: StikServer-Windows
+            package: dist/*.exe
+          - runner: ubuntu-latest
+            artifact: StikServer-Linux
+            package: dist/*.AppImage
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+          shared-key: desktop-${{ runner.os }}
+      - name: Build native device backend
+        run: cargo build --release --manifest-path native/Cargo.toml
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Package StikServer
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.package }}
+          if-no-files-found: error

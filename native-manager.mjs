@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { access, mkdir, rename, unlink, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { basename, join } from "node:path";
 import { spawn } from "node:child_process";
@@ -66,6 +66,7 @@ export class NativeDeviceManager extends EventEmitter {
     this.pairingDirectory = options.pairingDirectory || process.env.STIKSERVER_PAIRING_DIR || join(projectRoot, "pairings");
     this.sessions = new Map();
     this.pairingSessions = new Map();
+    this.resolvedPairings = new Map();
     this.binaryAvailable = false;
     this.ffmpegAvailable = false;
   }
@@ -88,13 +89,23 @@ export class NativeDeviceManager extends EventEmitter {
   }
 
   pairingPath(device) {
-    const identifier = String(device.serviceIdentifier || device.id).replace(/[^a-zA-Z0-9._-]/g, "_");
+    const resolved = this.resolvedPairings.get(device.id);
+    if (resolved) return resolved;
+    const identifier = String(device.pairingIdentifier || device.serviceIdentifier || device.id).replace(/[^a-zA-Z0-9._-]/g, "_");
     return join(this.pairingDirectory, `${identifier}.plist`);
   }
 
   async describe(device) {
-    const pairingFile = this.pairingPath(device);
-    const paired = await readable(pairingFile);
+    let pairingFile = this.pairingPath(device);
+    let paired = await readable(pairingFile);
+    if (!paired && this.binaryAvailable) {
+      const matching = await this.findMatchingPairing(device);
+      if (matching) {
+        pairingFile = matching;
+        paired = true;
+        this.resolvedPairings.set(device.id, matching);
+      }
+    }
     const session = this.sessions.get(device.id);
     return {
       ...device,
@@ -119,19 +130,38 @@ export class NativeDeviceManager extends EventEmitter {
     await writeFile(temporary, bytes, { mode: 0o600 });
     try {
       await this.validatePairing(temporary);
-      const tags = device.authenticationTags || [];
-      if (tags.length) {
-        const matches = await Promise.all(tags.map(authTag => this.matchesPairing(temporary, device.serviceIdentifier, authTag)));
+      const candidates = pairingCandidates(device);
+      if (candidates.length) {
+        const matches = await Promise.all(candidates.map(candidate => this.matchesPairing(temporary, candidate.identifier, candidate.authTag)));
         if (!matches.some(Boolean)) throw new Error("This pairing identity does not belong to the selected device");
       }
       await unlink(destination).catch(() => {});
       await rename(temporary, destination);
+      this.resolvedPairings.set(device.id, destination);
       this.emit("pairing", device.id, { state: "ready" });
       return destination;
     } catch (error) {
       await unlink(temporary).catch(() => {});
       throw error;
     }
+  }
+
+  async findMatchingPairing(device) {
+    const candidates = pairingCandidates(device);
+    if (!candidates.length) return null;
+    const entries = await readdir(this.pairingDirectory, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".plist")) continue;
+      const pairingFile = join(this.pairingDirectory, entry.name);
+      for (const candidate of candidates) {
+        try {
+          if (await this.matchesPairing(pairingFile, candidate.identifier, candidate.authTag)) return pairingFile;
+        } catch {
+          // Ignore invalid or unrelated records and continue checking the local store.
+        }
+      }
+    }
+    return null;
   }
 
   validatePairing(pairingFile) {
@@ -266,7 +296,10 @@ export class NativeDeviceManager extends EventEmitter {
     if (!pairing) return;
     this.pairingSessions.delete(deviceId);
     if (error) this.emit("pairing", deviceId, { state: "failed", message: error.message });
-    else this.emit("pairing", deviceId, { state: "ready" });
+    else {
+      this.resolvedPairings.set(deviceId, pairing.output);
+      this.emit("pairing", deviceId, { state: "ready" });
+    }
   }
 
   send(deviceId, command) {
@@ -298,6 +331,14 @@ export class NativeDeviceManager extends EventEmitter {
     this.emit("log", deviceId, message);
     this.stop(deviceId);
   }
+}
+
+function pairingCandidates(device) {
+  const advertised = (device.pairingCandidates || []).flatMap(candidate =>
+    (candidate.authenticationTags || []).map(authTag => ({ identifier: candidate.identifier, authTag }))
+  );
+  if (advertised.length) return advertised;
+  return (device.authenticationTags || []).map(authTag => ({ identifier: device.serviceIdentifier, authTag }));
 }
 
 async function executable(target) {

@@ -35,6 +35,7 @@ h1 { margin: 2px 0 0; font-size: clamp(1.6rem, 5vw, 2.45rem); letter-spacing: -.
 .device-icon { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 13px; background: linear-gradient(145deg, #6e62ff, #2999e8); font-size: 1.2rem; }
 .device strong, .device small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .device small { margin-top: 3px; color: #a8a6b1; }
+.device .device-identifier { color: #6f6d79; font: .68rem ui-monospace, SFMono-Regular, Menlo, monospace; }
 .empty { padding: 22px 14px; margin: 0; color: #918f9c; text-align: center; }
 .viewer-panel { padding: 14px; min-width: 0; }
 .screen-shell { position: relative; display: grid; place-items: center; min-height: min(68dvh, 760px); overflow: hidden; border-radius: 18px; background: #000; touch-action: none; }
@@ -45,9 +46,13 @@ h1 { margin: 2px 0 0; font-size: clamp(1.6rem, 5vw, 2.45rem); letter-spacing: -.
 .controls button:active { transform: scale(.96); background: rgba(255,255,255,.16); }
 .controls .half { grid-column: span 2; }
 .controls .wide { grid-column: 1 / -1; }
-.text-input { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) 52px 70px; gap: 8px; }
-.text-input input { min-width: 0; border: 1px solid rgba(255,255,255,.12); border-radius: 14px; background: rgba(255,255,255,.06); color: #fff; padding: 0 14px; font: inherit; }
-.text-input input::placeholder { color: #888693; }
+.live-input { grid-column: 1 / -1; display: grid; gap: 6px; color: #a8a6b1; font-size: .78rem; }
+.live-input textarea { width: 100%; min-height: 50px; resize: none; border: 1px solid rgba(255,255,255,.12); border-radius: 14px; background: rgba(255,255,255,.06); color: #fff; padding: 13px 14px; font: inherit; }
+.live-input textarea:focus { outline: 2px solid rgba(126,112,255,.7); outline-offset: 1px; }
+.live-input textarea::placeholder { color: #888693; }
+.desktop-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 10px 12px; border: 1px solid rgba(125,115,255,.25); border-radius: 14px; background: rgba(100,85,238,.1); color: #c9c6dc; font-size: .84rem; }
+.desktop-actions[hidden] { display: none; }
+.desktop-actions button { min-height: 38px; padding: 7px 12px; border: 1px solid rgba(255,255,255,.14); border-radius: 11px; background: rgba(255,255,255,.09); color: #fff; }
 .more-controls { grid-column: 1 / -1; border: 1px solid rgba(255,255,255,.1); border-radius: 14px; background: rgba(255,255,255,.04); }
 .more-controls summary { padding: 13px 14px; cursor: pointer; color: #d8d7df; }
 .more-controls > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; padding: 0 8px 8px; }
@@ -99,6 +104,7 @@ legend { padding: 0 5px; color: #cbc9d3; font-weight: 700; }
   .advanced-grid { grid-template-columns: 1fr; }
   .field-grid { grid-template-columns: 1fr; }
   .process-row { grid-template-columns: 52px minmax(0,1fr) auto; }
+  .desktop-actions { align-items: stretch; flex-direction: column; }
 }
 
 @media (orientation: landscape) and (max-height: 600px) {

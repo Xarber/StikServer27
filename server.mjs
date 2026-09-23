@@ -15,7 +15,8 @@ const agents = new Map();
 const viewers = new Set();
 const discovery = new RemotePairingDiscovery();
 const nativeDevices = new NativeDeviceManager();
-const batteryHistory = new BatteryHistoryStore(fileURLToPath(new URL("./data/battery-history/", import.meta.url)));
+const batteryHistoryRoot = process.env.STIKSERVER_DATA_DIR || fileURLToPath(new URL("./data/battery-history/", import.meta.url));
+const batteryHistory = new BatteryHistoryStore(batteryHistoryRoot);
 let directDevices = [];
 let rawDirectDevices = [];
 
@@ -404,14 +405,19 @@ server.on("upgrade", (request, socket) => {
   }
 });
 
-server.listen(port, host, () => {
-  const access = host === "0.0.0.0" ? "this computer's Tailscale/private IP" : host;
-  console.log(`StikServer listening on http://${access}:${port}`);
-  if (!token) console.warn("STIKSERVER_TOKEN is unset; only use this on a trusted private network.");
-  nativeDevices.initialize()
-    .then(() => refreshDirectDevices())
-    .catch(error => console.warn(`Native backend: ${error.message}`));
-  discovery.start();
+export const serverReady = new Promise((resolve, reject) => {
+  server.once("error", reject);
+  server.listen(port, host, () => {
+    server.removeListener("error", reject);
+    const access = host === "0.0.0.0" ? "this computer's Tailscale/private IP" : host;
+    console.log(`StikServer listening on http://${access}:${port}`);
+    if (!token) console.warn("STIKSERVER_TOKEN is unset; only use this on a trusted private network.");
+    nativeDevices.initialize()
+      .then(() => refreshDirectDevices())
+      .catch(error => console.warn(`Native backend: ${error.message}`));
+    discovery.start();
+    resolve({ host, port });
+  });
 });
 
 discovery.on("changed", devices => {
@@ -456,10 +462,19 @@ async function refreshDirectDevices() {
   publishDevices();
 }
 
-function shutdown() {
+export function stopServer() {
   discovery.stop();
   nativeDevices.stopAll();
-  server.close(() => process.exit(0));
+  for (const viewer of [...viewers]) viewer.close(1001, "StikServer is shutting down");
+  for (const { peer } of agents.values()) peer.close(1001, "StikServer is shutting down");
+  return new Promise(resolve => {
+    if (!server.listening) return resolve();
+    server.close(resolve);
+  });
 }
-process.once("SIGINT", shutdown);
-process.once("SIGTERM", shutdown);
+
+if (process.env.STIKSERVER_EMBEDDED !== "1") {
+  const shutdownProcess = () => stopServer().finally(() => process.exit(0));
+  process.once("SIGINT", shutdownProcess);
+  process.once("SIGTERM", shutdownProcess);
+}

@@ -209,30 +209,54 @@ export class RemotePairingDiscovery extends EventEmitter {
   }
 
   devices() {
-    return [...this.instances.values()]
-      .filter(instance => instance.target && instance.port)
-      .map(instance => {
-        const identifier = instance.txt.identifier || instance.instance.replace(`.${SERVICE}`, "");
-        const model = instance.txt.model || "";
-        const kind = model.startsWith("iPad") ? "iPad" : model.startsWith("iPhone") ? "iPhone" : "iOS Device";
-        const addresses = [...(this.hostAddresses.get(instance.target)?.keys() || [])];
-        return {
-          id: `direct:${identifier}`,
-          serviceIdentifier: identifier,
-          name: instance.txt.name || `Nearby ${kind}`,
-          kind,
-          model,
-          host: instance.target,
-          port: instance.port,
-          addresses,
-          authenticationTags: Object.entries(instance.txt)
-            .filter(([key]) => key === "authTag" || key.startsWith("authTag"))
-            .map(([, value]) => String(value)),
-          mode: "direct",
-          connected: false,
-          controllable: false
-        };
-      });
+    const groups = new Map();
+    for (const instance of this.instances.values()) {
+      if (!instance.target || !instance.port) continue;
+      const addresses = [...(this.hostAddresses.get(instance.target)?.keys() || [])];
+      const stableIdentifier = instance.txt.udid || instance.txt.deviceIdentifier || instance.txt.serialNumber;
+      const physicalKey = stableIdentifier || addresses.find(address => !address.includes(":")) || instance.target;
+      const current = groups.get(physicalKey) || [];
+      current.push({ instance, addresses });
+      groups.set(physicalKey, current);
+    }
+
+    return [...groups.entries()].map(([physicalKey, advertisements]) => {
+      advertisements.sort((left, right) => (right.instance.expiresAt || 0) - (left.instance.expiresAt || 0));
+      const latest = advertisements[0].instance;
+      const identifiers = advertisements.map(({ instance }) => instance.txt.identifier || instance.instance.replace(`.${SERVICE}`, ""));
+      const pairingCandidates = advertisements.map(({ instance }) => ({
+        identifier: instance.txt.identifier || instance.instance.replace(`.${SERVICE}`, ""),
+        authenticationTags: Object.entries(instance.txt)
+          .filter(([key]) => key === "authTag" || key.startsWith("authTag"))
+          .map(([, value]) => String(value))
+      }));
+      const model = advertisements.map(({ instance }) => instance.txt.model).find(Boolean) || "";
+      const hostHint = String(latest.target || "").toLowerCase();
+      const kind = model.startsWith("iPad") || hostHint.includes("ipad")
+        ? "iPad"
+        : model.startsWith("iPhone") || hostHint.includes("iphone")
+          ? "iPhone"
+          : "iOS Device";
+      const addresses = [...new Set(advertisements.flatMap(advertisement => advertisement.addresses))];
+      const advertisedName = advertisements.map(({ instance }) => instance.txt.name).find(Boolean);
+      const hostName = String(latest.target || "").replace(/\.local\.?$/i, "").replaceAll("-", " ");
+      return {
+        id: `direct:${physicalKey}`,
+        pairingIdentifier: physicalKey,
+        serviceIdentifier: identifiers[0],
+        pairingCandidates,
+        name: advertisedName || hostName || `Nearby ${kind}`,
+        kind,
+        model,
+        host: latest.target,
+        port: latest.port,
+        addresses,
+        authenticationTags: [...new Set(pairingCandidates.flatMap(candidate => candidate.authenticationTags))],
+        mode: "direct",
+        connected: false,
+        controllable: false
+      };
+    });
   }
 
   publish() {

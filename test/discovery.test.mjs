@@ -43,10 +43,12 @@ test("parses and publishes a remote-pairing service", () => {
   const discovery = new RemotePairingDiscovery();
   discovery.consume(records);
   assert.deepEqual(discovery.devices()[0], {
-    id: "direct:ABC",
+    id: "direct:192.168.1.20",
+    pairingIdentifier: "192.168.1.20",
     serviceIdentifier: "ABC",
-    name: "Nearby iOS Device",
-    kind: "iOS Device",
+    pairingCandidates: [{ identifier: "ABC", authenticationTags: [] }],
+    name: "ipad",
+    kind: "iPad",
     model: "",
     host,
     port: 49152,
@@ -56,4 +58,23 @@ test("parses and publishes a remote-pairing service", () => {
     connected: false,
     controllable: false
   });
+});
+
+test("groups rotating advertisements for the same physical device", () => {
+  const discovery = new RemotePairingDiscovery();
+  discovery.hostAddresses.set("ipad.local", new Map([["192.168.1.20", Date.now() + 60_000]]));
+  discovery.instances.set("first", {
+    instance: `OLD._remotepairing._tcp.local`, target: "ipad.local", port: 49152,
+    txt: { identifier: "OLD", authTag: "old-tag", model: "iPad16,6" }, expiresAt: Date.now() + 30_000
+  });
+  discovery.instances.set("second", {
+    instance: `NEW._remotepairing._tcp.local`, target: "ipad.local", port: 49153,
+    txt: { identifier: "NEW", authTag: "new-tag", model: "iPad16,6" }, expiresAt: Date.now() + 60_000
+  });
+  const devices = discovery.devices();
+  assert.equal(devices.length, 1);
+  assert.equal(devices[0].id, "direct:192.168.1.20");
+  assert.equal(devices[0].port, 49153);
+  assert.deepEqual(devices[0].authenticationTags.sort(), ["new-tag", "old-tag"]);
+  assert.equal(devices[0].pairingCandidates.length, 2);
 });

@@ -67,11 +67,14 @@ function renderDevices(devices) {
     const button = document.createElement("button");
     button.className = `device${device.id === selectedDevice ? " selected" : ""}`;
     button.dataset.deviceId = device.id;
-    button.innerHTML = `<span class="device-icon">${device.kind === "iPad" ? "▭" : "▯"}</span><span><strong></strong><small></small></span>`;
+    button.innerHTML = `<span class="device-icon">${device.kind === "iPad" ? "▭" : "▯"}</span><span><strong></strong><small class="device-state"></small><small class="device-identifier"></small></span>`;
     button.querySelector("strong").textContent = device.name;
-    button.querySelector("small").textContent = device.controllable
+    button.querySelector(".device-state").textContent = device.controllable
       ? `${device.kind} · Ready`
       : `${device.kind} · Discovered locally`;
+    const identifier = device.serviceIdentifier || device.pairingIdentifier || device.id;
+    button.querySelector(".device-identifier").textContent = identifier;
+    button.querySelector(".device-identifier").title = identifier;
     if (!device.controllable) button.title = device.backendMessage || "Pair this device with StikServer";
     button.addEventListener("click", () => selectDevice(device.id));
     devicesElement.append(button);
@@ -188,12 +191,37 @@ document.querySelectorAll("[data-command]").forEach(button => {
   }));
 });
 
-document.querySelector("#text-input").addEventListener("submit", event => {
+const liveText = document.querySelector("#live-text");
+let composingText = false;
+liveText.addEventListener("compositionstart", () => { composingText = true; });
+liveText.addEventListener("compositionend", event => {
+  composingText = false;
+  if (event.data) command("text", { text: event.data });
+  liveText.value = "";
+});
+liveText.addEventListener("beforeinput", event => {
+  if (composingText) return;
+  if (event.inputType.startsWith("delete")) {
+    event.preventDefault();
+    command("backspace");
+  } else if (event.inputType === "insertLineBreak" || event.inputType === "insertParagraph") {
+    event.preventDefault();
+    command("text", { text: "\n" });
+  } else if (event.data) {
+    event.preventDefault();
+    command("text", { text: event.data });
+  }
+  liveText.value = "";
+});
+liveText.addEventListener("paste", event => {
   event.preventDefault();
-  const input = document.querySelector("#text");
-  if (!selectedDevice || !input.value) return;
-  send({ type: "command", deviceId: selectedDevice, command: "text", text: input.value });
-  input.value = "";
+  const text = event.clipboardData?.getData("text/plain") || "";
+  if (text) command("text", { text });
+});
+liveText.addEventListener("input", () => {
+  if (composingText || !liveText.value) return;
+  command("text", { text: liveText.value });
+  liveText.value = "";
 });
 
 document.querySelector("#fullscreen").addEventListener("click", async () => {
@@ -267,6 +295,14 @@ function handlePairing(message) {
 function showStatus(message, online) {
   status.textContent = message;
   status.classList.toggle("online", online);
+}
+
+if (window.stikDesktop) {
+  document.querySelector("#desktop-actions").hidden = false;
+  document.querySelector("#copy-remote-link").addEventListener("click", async () => {
+    const result = await window.stikDesktop.copyRemoteLink();
+    showStatus(result?.url ? `Copied ${result.url}` : "No private-network address is available", Boolean(result?.url));
+  });
 }
 
 function command(command, fields = {}) {
