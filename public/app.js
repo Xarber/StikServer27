@@ -20,6 +20,11 @@ let currentOrientation = "portrait";
 let runningProcesses = [];
 let latestBattery = null;
 let batterySamples = [];
+const discoveryHelpTimer = setTimeout(() => {
+  if (!knownDevices.length) {
+    empty.textContent = "No devices found. On macOS, allow StikServer in System Settings › Privacy & Security › Local Network, then reopen the app. The iPhone or iPad must be on the same local network.";
+  }
+}, 8_000);
 
 function connect() {
   const scheme = location.protocol === "https:" ? "wss:" : "ws:";
@@ -60,8 +65,14 @@ function send(value) {
 
 function renderDevices(devices) {
   knownDevices = devices;
+  if (devices.length) clearTimeout(discoveryHelpTimer);
   devicesElement.replaceChildren();
   empty.hidden = devices.length > 0;
+  if (!devices.length && empty.textContent.startsWith("No devices found")) {
+    // Preserve the actionable permission message after the initial search timeout.
+  } else if (!devices.length) {
+    empty.textContent = "Searching the local network for iPhone and iPad devices…";
+  }
   if (selectedDevice && !devices.some(device => device.id === selectedDevice)) selectDevice(null);
   for (const device of devices) {
     const button = document.createElement("button");

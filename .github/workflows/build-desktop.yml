@@ -8,6 +8,7 @@ on:
       - desktop/**
       - discovery.mjs
       - electron-builder.config.cjs
+      - build/**
       - native/**
       - native-manager.mjs
       - package.json
