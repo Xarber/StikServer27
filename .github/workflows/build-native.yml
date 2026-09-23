@@ -1,0 +1,43 @@
+name: Build native backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - native/**
+      - .github/workflows/build-native.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            artifact: stikserver-native-linux
+            binary: native/target/release/stikserver-native
+          - runner: macos-15
+            artifact: stikserver-native-macos
+            binary: native/target/release/stikserver-native
+          - runner: windows-latest
+            artifact: stikserver-native-windows
+            binary: native/target/release/stikserver-native.exe
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+          shared-key: ${{ matrix.artifact }}
+      - name: Build native backend
+        run: cargo build --release --manifest-path native/Cargo.toml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.binary }}
+          if-no-files-found: error
