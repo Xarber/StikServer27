@@ -249,7 +249,7 @@ function handleDeviceEvent(event) {
   } else if (event.type === "configuration") {
     applyConfiguration(event);
     document.querySelector("#advanced-output").textContent = pretty(event);
-  } else if (["deviceInfo", "performance", "diagnostics"].includes(event.type)) {
+  } else if (["deviceInfo", "performance", "diagnostics", "energy", "graphics", "networkActivity"].includes(event.type)) {
     document.querySelector("#overview-output").textContent = pretty(event);
   } else if (event.type === "commandResult") {
     showStatus(event.ok ? `${event.command} completed` : event.message || `${event.command} failed`, event.ok);
@@ -270,6 +270,13 @@ document.querySelectorAll("[data-tool-tab]").forEach(button => {
 
 document.querySelectorAll("[data-action]").forEach(button => {
   button.addEventListener("click", () => command(button.dataset.action));
+});
+
+document.querySelector("#energy-form").addEventListener("submit", event => {
+  event.preventDefault();
+  const pids = document.querySelector("#energy-pids").value.split(",").map(value => Number.parseInt(value.trim(), 10)).filter(value => Number.isInteger(value) && value > 0);
+  if (!pids.length) return showStatus("Enter at least one process ID", false);
+  command("energy", { pids });
 });
 
 document.querySelector("#process-filter").addEventListener("input", renderProcesses);

@@ -69,8 +69,9 @@
             <div class="tool-panel active" data-tool-panel="overview">
               <div class="panel-heading">
                 <div><h2>Device overview</h2><p>Hardware, networking, diagnostics and a live performance sample.</p></div>
-                <div class="button-row"><button data-action="deviceInfo">Refresh info</button><button data-action="performance">Sample performance</button><button data-action="diagnostics">Diagnostics</button></div>
+                <div class="button-row"><button data-action="deviceInfo">Refresh info</button><button data-action="performance">Performance</button><button data-action="graphics">Graphics & FPS</button><button data-action="networkActivity">Network activity</button><button data-action="diagnostics">Diagnostics</button></div>
               </div>
+              <form id="energy-form" class="inline-form"><input id="energy-pids" inputmode="numeric" placeholder="Energy PIDs, comma-separated" aria-label="Process IDs for energy sampling"><button type="submit">Sample energy</button></form>
               <pre id="overview-output" class="data-output">Select a ready device.</pre>
             </div>
 

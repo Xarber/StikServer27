@@ -14,7 +14,10 @@ use idevice::{
     dvt::{
         condition_inducer::ConditionInducerClient,
         device_info::DeviceInfoClient,
+        energy_monitor::{EnergyMonitorClient, EnergySample},
+        graphics::GraphicsClient,
         location_simulation::LocationSimulationClient,
+        network_monitor::{NetworkEvent, NetworkMonitorClient},
         remote_server::RemoteServerClient,
         sysmontap::{SysmontapClient, SysmontapConfig},
     },
@@ -56,6 +59,7 @@ struct ControlCommand {
     y: Option<f64>,
     text: Option<String>,
     pid: Option<u32>,
+    pids: Option<Vec<u32>>,
     signal: Option<u32>,
     latitude: Option<f64>,
     longitude: Option<f64>,
@@ -476,6 +480,90 @@ async fn handle_command(
                 "system": sample.system,
                 "cpu": sample.system_cpu_usage
             })));
+        }
+        "energy" => {
+            let pids = command
+                .pids
+                .filter(|values| !values.is_empty())
+                .ok_or("energy requires at least one pid")?;
+            let mut monitor = EnergyMonitorClient::new(dvt).await?;
+            monitor.start_sampling(&pids).await?;
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            let bytes = monitor.sample_attributes(&pids).await?;
+            let _ = monitor.stop_sampling(&pids).await;
+            let samples = EnergySample::from_bytes(&bytes)?;
+            return Ok(Some(json!({
+                "type": "energy",
+                "samples": samples.into_iter().map(|sample| json!({
+                    "pid": sample.pid,
+                    "timestamp": sample.timestamp,
+                    "total": sample.total_energy,
+                    "cpu": sample.cpu_energy,
+                    "gpu": sample.gpu_energy,
+                    "network": sample.networking_energy,
+                    "display": sample.display_energy,
+                    "location": sample.location_energy,
+                    "appState": sample.appstate_energy
+                })).collect::<Vec<_>>()
+            })));
+        }
+        "graphics" => {
+            let mut monitor = GraphicsClient::new(dvt).await?;
+            monitor.start_sampling(0.5).await?;
+            let sample = tokio::time::timeout(Duration::from_secs(4), monitor.sample())
+                .await
+                .map_err(|_| "graphics sample timed out")??;
+            let _ = monitor.stop_sampling().await;
+            return Ok(Some(json!({
+                "type": "graphics",
+                "timestamp": sample.timestamp,
+                "fps": sample.fps,
+                "allocatedMemory": sample.alloc_system_memory,
+                "usedMemory": sample.in_use_system_memory,
+                "driverMemory": sample.in_use_system_memory_driver,
+                "gpu": sample.gpu_bundle_name,
+                "recoveryCount": sample.recovery_count
+            })));
+        }
+        "networkActivity" => {
+            let mut monitor = NetworkMonitorClient::new(dvt).await?;
+            monitor.start_monitoring().await?;
+            let event = tokio::time::timeout(Duration::from_secs(4), monitor.next_event())
+                .await
+                .map_err(|_| "network activity sample timed out")??;
+            let _ = monitor.stop_monitoring().await;
+            let data = match event {
+                NetworkEvent::InterfaceDetection(value) => json!({
+                    "kind": "interface",
+                    "interfaceIndex": value.interface_index,
+                    "name": value.name
+                }),
+                NetworkEvent::ConnectionDetection(value) => json!({
+                    "kind": "connection",
+                    "pid": value.pid,
+                    "interfaceIndex": value.interface_index,
+                    "local": value.local_address.map(|address| json!({ "address": address.addr, "port": address.port, "family": address.family })),
+                    "remote": value.remote_address.map(|address| json!({ "address": address.addr, "port": address.port, "family": address.family })),
+                    "receiveBufferSize": value.recv_buffer_size,
+                    "receiveBufferUsed": value.recv_buffer_used,
+                    "serial": value.serial_number,
+                    "connectionKind": value.kind
+                }),
+                NetworkEvent::ConnectionUpdate(value) => json!({
+                    "kind": "update",
+                    "receivePackets": value.rx_packets,
+                    "receiveBytes": value.rx_bytes,
+                    "transmitPackets": value.tx_packets,
+                    "transmitBytes": value.tx_bytes,
+                    "retransmits": value.tx_retx,
+                    "minimumRTT": value.min_rtt,
+                    "averageRTT": value.avg_rtt,
+                    "serial": value.connection_serial,
+                    "time": value.time
+                }),
+                NetworkEvent::Unknown(kind) => json!({ "kind": "unknown", "messageType": kind }),
+            };
+            return Ok(Some(json!({ "type": "networkActivity", "event": data })));
         }
         "setLocation" => {
             let latitude = command.latitude.ok_or("setLocation requires latitude")?;
