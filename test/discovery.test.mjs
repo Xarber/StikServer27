@@ -78,3 +78,14 @@ test("groups rotating advertisements for the same physical device", () => {
   assert.deepEqual(devices[0].authenticationTags.sort(), ["new-tag", "old-tag"]);
   assert.equal(devices[0].pairingCandidates.length, 2);
 });
+
+test("ignores unrelated Bonjour SRV and TXT records", () => {
+  const discovery = new RemotePairingDiscovery();
+  discovery.consume([
+    { name: "Living Room._googlecast._tcp.local", type: 33, ttl: 120, value: { port: 8009, target: "tv.local" } },
+    { name: "Living Room._googlecast._tcp.local", type: 16, ttl: 120, value: { identifier: "NOT-IOS" } },
+    { name: "MacBook._rfb._tcp.local", type: 33, ttl: 120, value: { port: 5900, target: "macbook.local" } },
+    { name: "Router._adisk._tcp.local", type: 33, ttl: 120, value: { port: 445, target: "router.local" } }
+  ]);
+  assert.deepEqual(discovery.devices(), []);
+});

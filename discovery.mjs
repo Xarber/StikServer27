@@ -5,6 +5,10 @@ const MDNS_ADDRESS = "224.0.0.251";
 const MDNS_PORT = 5353;
 const SERVICE = "_remotepairing._tcp.local";
 
+function isRemotePairingInstance(name) {
+  return String(name || "").toLowerCase().endsWith(`.${SERVICE}`);
+}
+
 function readName(packet, start, depth = 0) {
   if (depth > 20) throw new Error("DNS compression loop");
   const labels = [];
@@ -174,13 +178,13 @@ export class RemotePairingDiscovery extends EventEmitter {
         const current = this.instances.get(record.value) || { instance: record.value, txt: {} };
         current.expiresAt = now + Math.max(record.ttl, 1) * 1_000;
         this.instances.set(record.value, current);
-      } else if (record.type === 33 && record.value) {
+      } else if (record.type === 33 && record.value && isRemotePairingInstance(record.name)) {
         const current = this.instances.get(record.name) || { instance: record.name, txt: {} };
         current.target = record.value.target;
         current.port = record.value.port;
         current.expiresAt = now + Math.max(record.ttl, 1) * 1_000;
         this.instances.set(record.name, current);
-      } else if (record.type === 16 && record.value) {
+      } else if (record.type === 16 && record.value && isRemotePairingInstance(record.name)) {
         const current = this.instances.get(record.name) || { instance: record.name, txt: {} };
         current.txt = { ...current.txt, ...record.value };
         current.expiresAt = now + Math.max(record.ttl, 1) * 1_000;
@@ -211,7 +215,7 @@ export class RemotePairingDiscovery extends EventEmitter {
   devices() {
     const groups = new Map();
     for (const instance of this.instances.values()) {
-      if (!instance.target || !instance.port) continue;
+      if (!isRemotePairingInstance(instance.instance) || !instance.target || !instance.port) continue;
       const addresses = [...(this.hostAddresses.get(instance.target)?.keys() || [])];
       const stableIdentifier = instance.txt.udid || instance.txt.deviceIdentifier || instance.txt.serialNumber;
       const physicalKey = stableIdentifier || addresses.find(address => !address.includes(":")) || instance.target;
