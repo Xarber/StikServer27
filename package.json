@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "check": "node --check server.mjs && node --check discovery.mjs && node --check native-manager.mjs && node --check public/app.js",
+    "check": "node --check server.mjs && node --check discovery.mjs && node --check native-manager.mjs && node --check battery-history.mjs && node --check public/app.js",
     "test": "node --test"
   },
   "engines": {

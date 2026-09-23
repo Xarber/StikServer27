@@ -5,6 +5,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RemotePairingDiscovery } from "./discovery.mjs";
 import { NativeDeviceManager } from "./native-manager.mjs";
+import { BatteryHistoryStore } from "./battery-history.mjs";
 
 const host = process.env.STIKSERVER_HOST || "127.0.0.1";
 const port = Number(process.env.STIKSERVER_PORT || 8765);
@@ -14,6 +15,7 @@ const agents = new Map();
 const viewers = new Set();
 const discovery = new RemotePairingDiscovery();
 const nativeDevices = new NativeDeviceManager();
+const batteryHistory = new BatteryHistoryStore(fileURLToPath(new URL("./data/battery-history/", import.meta.url)));
 let directDevices = [];
 let rawDirectDevices = [];
 
@@ -241,6 +243,13 @@ class WebSocketPeer {
     if (message.type === "pairPin") {
       try { nativeDevices.submitPairingPin(String(message.deviceId || ""), String(message.pin || "")); }
       catch (error) { sendJSON(this, { type: "error", message: error.message }); }
+      return;
+    }
+    if (message.type === "batteryHistory") {
+      const id = String(message.deviceId || this.subscription || "");
+      batteryHistory.list(id)
+        .then(history => sendJSON(this, { type: "deviceEvent", deviceId: id, event: { type: "batteryHistory", history } }))
+        .catch(error => sendJSON(this, { type: "error", message: error.message }));
     }
   }
 
@@ -348,6 +357,13 @@ nativeDevices.on("frame", (deviceId, frame) => {
 nativeDevices.on("event", (deviceId, event) => {
   for (const viewer of viewers) {
     if (viewer.subscription === deviceId) sendJSON(viewer, { type: "deviceEvent", deviceId, event });
+  }
+  if (event.type === "battery") {
+    batteryHistory.record(deviceId, event.data).then(history => {
+      for (const viewer of viewers) {
+        if (viewer.subscription === deviceId) sendJSON(viewer, { type: "deviceEvent", deviceId, event: { type: "batteryHistory", history } });
+      }
+    }).catch(error => console.warn(`Battery history: ${error.message}`));
   }
 });
 nativeDevices.on("session", () => refreshDirectDevices());

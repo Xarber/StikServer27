@@ -25,6 +25,8 @@ cargo build --release
 
 Install FFmpeg with the package manager for the server operating system. StikServer automatically detects both components and explains what is missing in the device list. Pairing identities are stored locally in `pairings/` and are never sent to the browser.
 
+The browser controller includes process inspection and termination, persistent battery-health history, location simulation, diagnostics, CPU/system performance, energy, graphics/FPS and network samples, appearance and accessibility settings, Xcode device-condition profiles, and device power controls. Battery history is kept on the server in `data/battery-history/`, so it is shared by all authorized viewers without exposing pairing identities.
+
 ## Internal agent protocol
 
 Connect to `/agent?token=...`, then send:

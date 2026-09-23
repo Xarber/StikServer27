@@ -17,6 +17,7 @@ let knownDevices = [];
 let currentOrientation = "portrait";
 let runningProcesses = [];
 let latestBattery = null;
+let batterySamples = [];
 
 function connect() {
   const scheme = location.protocol === "https:" ? "wss:" : "ws:";
@@ -98,8 +99,10 @@ function selectDevice(id) {
   }
   runningProcesses = [];
   latestBattery = null;
+  batterySamples = [];
   renderProcesses();
   renderBatteryHistory();
+  if (id) send({ type: "batteryHistory", deviceId: id });
 }
 
 function displayFrame(blob) {
@@ -241,7 +244,9 @@ function handleDeviceEvent(event) {
     renderProcesses();
   } else if (event.type === "battery") {
     latestBattery = batteryMeasurement(event.data || {});
-    saveBatteryMeasurement(latestBattery);
+    renderBatteryHistory();
+  } else if (event.type === "batteryHistory") {
+    batterySamples = Array.isArray(event.history) ? event.history : [];
     renderBatteryHistory();
   } else if (event.type === "conditions") {
     renderConditions(event.groups || []);
@@ -384,20 +389,8 @@ function renderConditions(groups) {
   }
 }
 
-function batteryHistoryKey() {
-  return `stikserver-battery-${selectedDevice || "none"}`;
-}
-
 function batteryHistory() {
-  try { return JSON.parse(localStorage.getItem(batteryHistoryKey()) || "[]"); }
-  catch { return []; }
-}
-
-function saveBatteryMeasurement(measurement) {
-  if (!selectedDevice || !measurement || Object.values(measurement).every(value => value == null)) return;
-  const history = batteryHistory();
-  history.push({ ...measurement, date: new Date().toISOString() });
-  localStorage.setItem(batteryHistoryKey(), JSON.stringify(history.slice(-500)));
+  return batterySamples;
 }
 
 function batteryMeasurement(data) {
