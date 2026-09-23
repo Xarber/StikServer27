@@ -40,6 +40,8 @@
             <button data-command="softwareKeyboard" class="half">Keyboard</button>
             <button id="fullscreen" class="half">Fullscreen</button>
             <button id="pair" class="wide" hidden>Pair with StikServer</button>
+            <button id="import-pairing" class="wide" hidden>Import pairing file</button>
+            <input id="pairing-file" type="file" accept=".plist,application/x-plist,application/xml,text/xml" hidden>
             <form id="text-input" class="text-input">
               <input id="text" type="text" autocomplete="off" placeholder="Type on the device" aria-label="Text to type on device">
               <button type="button" data-command="backspace" aria-label="Backspace">⌫</button>
@@ -87,7 +89,7 @@
 
             <div class="tool-panel" data-tool-panel="battery">
               <div class="panel-heading">
-                <div><h2>Battery health</h2><p>Measurements are saved in this browser to build history over time.</p></div>
+                <div><h2>Battery health</h2><p>Measurements are saved by StikServer to build shared history over time.</p></div>
                 <button data-action="battery">Record measurement</button>
               </div>
               <div id="battery-metrics" class="metric-grid"></div>

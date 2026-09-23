@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FramedRecordParser, JpegParser, preferredAddress } from "../native-manager.mjs";
+import { FramedRecordParser, JpegParser, isPairingPlist, preferredAddress } from "../native-manager.mjs";
 
 test("parses split native records", () => {
   const records = [];
@@ -36,4 +36,13 @@ test("prefers a directly reachable Bonjour address", () => {
     addresses: ["fe80::1234%en0"]
   }), "fe80::1234%en0");
   assert.equal(preferredAddress({ host: "ipad.local", addresses: ["fe80::1234"] }), "ipad.local");
+});
+
+test("recognizes bounded XML and binary pairing plists", () => {
+  const xml = Buffer.from(`${" ".repeat(32)}<?xml version="1.0"?><plist><dict/></plist>`);
+  const binary = Buffer.concat([Buffer.from("bplist00"), Buffer.alloc(24)]);
+  assert.equal(isPairingPlist(xml), true);
+  assert.equal(isPairingPlist(binary), true);
+  assert.equal(isPairingPlist(Buffer.from("not a pairing identity")), false);
+  assert.equal(isPairingPlist(Buffer.alloc(1024 * 1024 + 1)), false);
 });

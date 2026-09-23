@@ -5,6 +5,8 @@ const screen = document.querySelector("#screen");
 const placeholder = document.querySelector("#placeholder");
 const shell = document.querySelector("#screen-shell");
 const pairButton = document.querySelector("#pair");
+const importPairingButton = document.querySelector("#import-pairing");
+const pairingFileInput = document.querySelector("#pairing-file");
 const token = new URLSearchParams(location.search).get("token") || localStorage.getItem("stikserver-token") || "";
 if (token) localStorage.setItem("stikserver-token", token);
 
@@ -84,6 +86,7 @@ function selectDevice(id) {
   send({ type: "subscribe", deviceId: device?.controllable ? id : null });
   placeholder.hidden = Boolean(device?.controllable);
   pairButton.hidden = !device || device.mode !== "direct" || device.paired;
+  importPairingButton.hidden = !device || device.mode !== "direct" || device.paired;
   if (device && !device.controllable) {
     placeholder.hidden = false;
     placeholder.querySelector("span").textContent = device.backendMessage || "Pair this device to control it";
@@ -222,6 +225,30 @@ document.querySelector("#disconnect-device").addEventListener("click", () => {
 
 pairButton.addEventListener("click", () => {
   if (selectedDevice) send({ type: "pair", deviceId: selectedDevice });
+});
+
+importPairingButton.addEventListener("click", () => pairingFileInput.click());
+pairingFileInput.addEventListener("change", async () => {
+  const file = pairingFileInput.files?.[0];
+  const deviceId = selectedDevice;
+  pairingFileInput.value = "";
+  if (!file || !deviceId) return;
+  if (file.size > 1024 * 1024) return showStatus("Pairing files must be smaller than 1 MB", false);
+  showStatus("Validating pairing file…", false);
+  try {
+    const query = new URLSearchParams({ deviceId });
+    if (token) query.set("token", token);
+    const response = await fetch(`/api/pairing?${query}`, {
+      method: "POST",
+      headers: { "content-type": "application/x-plist" },
+      body: file
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.message || "Pairing import failed");
+    showStatus("Pairing file imported", true);
+  } catch (error) {
+    showStatus(error.message || "Pairing import failed", false);
+  }
 });
 
 function handlePairing(message) {

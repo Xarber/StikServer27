@@ -93,10 +93,18 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let arguments = parse_arguments()?;
     match arguments.command.as_str() {
         "pair" => pair(arguments).await,
+        "validate" => validate_pairing(arguments).await,
         "match" => match_pairing(arguments).await,
         "stream" => stream(arguments).await,
         other => Err(format!("unknown command: {other}").into()),
     }
+}
+
+async fn validate_pairing(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> {
+    let pairing_path = arguments.pairing.ok_or("validate requires --pairing")?;
+    RpPairingFile::read_from_file(pairing_path).await?;
+    println!("{}", json!({ "valid": true }));
+    Ok(())
 }
 
 fn parse_arguments() -> Result<Arguments, Box<dyn std::error::Error>> {

@@ -55,6 +55,34 @@ function publishDevices() {
   for (const viewer of viewers) sendJSON(viewer, message);
 }
 
+function readRequestBody(request, limit = 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let length = 0;
+    let failed = false;
+    request.on("data", chunk => {
+      if (failed) return;
+      length += chunk.length;
+      if (length > limit) {
+        failed = true;
+        reject(Object.assign(new Error("Pairing file exceeds the 1 MB limit"), { statusCode: 413 }));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.once("end", () => { if (!failed) resolve(Buffer.concat(chunks)); });
+    request.once("error", reject);
+  });
+}
+
+function jsonResponse(response, statusCode, value) {
+  response.writeHead(statusCode, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store"
+  });
+  response.end(JSON.stringify(value));
+}
+
 class WebSocketPeer {
   constructor(socket, role) {
     this.socket = socket;
@@ -318,6 +346,18 @@ const server = createServer(async (request, response) => {
       }));
       return;
     }
+    if (pathname === "/api/pairing" && request.method === "POST") {
+      if (!authorized(requestURL)) return jsonResponse(response, 401, { ok: false, message: "Unauthorized" });
+      const id = String(requestURL.searchParams.get("deviceId") || "");
+      const device = rawDirectDevices.find(candidate => candidate.id === id);
+      if (!device) return jsonResponse(response, 404, { ok: false, message: "Device is no longer available" });
+      const contentLength = Number(request.headers["content-length"] || 0);
+      if (contentLength > 1024 * 1024) return jsonResponse(response, 413, { ok: false, message: "Pairing file exceeds the 1 MB limit" });
+      const body = await readRequestBody(request);
+      await nativeDevices.importPairing(device, body);
+      await refreshDirectDevices();
+      return jsonResponse(response, 200, { ok: true });
+    }
     if (pathname === "/") pathname = "/index.html";
     const safePath = normalize(pathname).replace(/^(\.\.(\/|\\|$))+/, "");
     const filePath = join(publicRoot, safePath);
@@ -328,9 +368,13 @@ const server = createServer(async (request, response) => {
       "cache-control": "no-cache"
     });
     response.end(data);
-  } catch {
-    response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
-    response.end("Not found");
+  } catch (error) {
+    if (!response.headersSent && request.url?.startsWith("/api/")) {
+      jsonResponse(response, Number(error.statusCode || 400), { ok: false, message: error.message || "Request failed" });
+    } else if (!response.headersSent) {
+      response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      response.end("Not found");
+    }
   }
 });
 

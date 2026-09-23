@@ -1,11 +1,17 @@
 import { EventEmitter } from "node:events";
-import { access, mkdir } from "node:fs/promises";
+import { access, mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { basename, join } from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const projectRoot = fileURLToPath(new URL("./", import.meta.url));
+
+export function isPairingPlist(bytes) {
+  if (!Buffer.isBuffer(bytes) || bytes.length < 32 || bytes.length > 1024 * 1024) return false;
+  if (bytes.subarray(0, 8).equals(Buffer.from("bplist00"))) return true;
+  return bytes.toString("utf8", 0, Math.min(bytes.length, 512)).includes("<plist");
+}
 
 export class FramedRecordParser {
   constructor(onRecord) {
@@ -103,6 +109,57 @@ export class NativeDeviceManager extends EventEmitter {
             ? `Pairing identity not found: ${basename(pairingFile)}`
             : null
     };
+  }
+
+  async importPairing(device, bytes) {
+    if (!this.binaryAvailable) throw new Error("Build the native CoreDevice backend before importing a pairing identity");
+    if (!isPairingPlist(bytes)) throw new Error("Pairing identity must be an XML or binary plist between 32 bytes and 1 MB");
+    const destination = this.pairingPath(device);
+    const temporary = `${destination}.${process.pid}.upload`;
+    await writeFile(temporary, bytes, { mode: 0o600 });
+    try {
+      await this.validatePairing(temporary);
+      const tags = device.authenticationTags || [];
+      if (tags.length) {
+        const matches = await Promise.all(tags.map(authTag => this.matchesPairing(temporary, device.serviceIdentifier, authTag)));
+        if (!matches.some(Boolean)) throw new Error("This pairing identity does not belong to the selected device");
+      }
+      await unlink(destination).catch(() => {});
+      await rename(temporary, destination);
+      this.emit("pairing", device.id, { state: "ready" });
+      return destination;
+    } catch (error) {
+      await unlink(temporary).catch(() => {});
+      throw error;
+    }
+  }
+
+  validatePairing(pairingFile) {
+    return this.runPairingCheck(["validate", "--pairing", pairingFile], "Pairing validation");
+  }
+
+  matchesPairing(pairingFile, identifier, authTag) {
+    return this.runPairingCheck([
+      "match", "--pairing", pairingFile,
+      "--identifier", String(identifier),
+      "--auth-tag", String(authTag)
+    ], "Pairing identity match").then(result => Boolean(result.matches));
+  }
+
+  runPairingCheck(commandArguments, label) {
+    return new Promise((resolve, reject) => {
+      const child = spawn(this.binary, commandArguments, { stdio: ["ignore", "pipe", "pipe"] });
+      let output = "";
+      let errorOutput = "";
+      child.stdout.on("data", chunk => { output += chunk.toString("utf8"); });
+      child.stderr.on("data", chunk => { errorOutput += chunk.toString("utf8"); });
+      child.once("error", reject);
+      child.once("exit", code => {
+        if (code !== 0) return reject(new Error(errorOutput.trim() || `${label} exited with code ${code}`));
+        try { resolve(JSON.parse(output)); }
+        catch { reject(new Error(`${label} returned an invalid response`)); }
+      });
+    });
   }
 
   async start(device) {
