@@ -1,0 +1,67 @@
+:root {
+  color-scheme: dark;
+  font-family: ui-rounded, -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+  background: #08080c;
+  color: #f6f6fb;
+}
+
+* { box-sizing: border-box; }
+html, body { min-height: 100%; margin: 0; }
+body {
+  min-height: 100dvh;
+  background:
+    radial-gradient(circle at 15% 0%, rgba(96, 82, 255, .28), transparent 34rem),
+    radial-gradient(circle at 100% 100%, rgba(33, 193, 255, .14), transparent 32rem),
+    #08080c;
+  overscroll-behavior: none;
+}
+
+button { font: inherit; }
+main { width: min(1180px, 100%); min-height: 100dvh; margin: auto; padding: max(20px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); }
+header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+h1 { margin: 2px 0 0; font-size: clamp(1.6rem, 5vw, 2.45rem); letter-spacing: -.04em; }
+.eyebrow { margin: 0; color: #aaa8ff; font-size: .78rem; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
+.status { padding: 8px 12px; border: 1px solid rgba(255,255,255,.12); border-radius: 999px; background: rgba(255,255,255,.07); color: #d0cfda; font-size: .8rem; }
+.status.online { color: #8ff5ba; border-color: rgba(65, 225, 133, .28); }
+.layout { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 18px; align-items: start; }
+.devices-panel, .viewer-panel { border: 1px solid rgba(255,255,255,.1); border-radius: 24px; background: rgba(18,18,27,.75); box-shadow: 0 22px 70px rgba(0,0,0,.28); backdrop-filter: blur(24px); }
+.devices-panel { padding: 10px; }
+.devices { display: grid; gap: 8px; }
+.device { width: 100%; display: grid; grid-template-columns: 42px 1fr; gap: 11px; align-items: center; padding: 10px; border: 0; border-radius: 16px; color: inherit; background: transparent; text-align: left; }
+.device:hover, .device.selected { background: rgba(255,255,255,.1); }
+.device-icon { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 13px; background: linear-gradient(145deg, #6e62ff, #2999e8); font-size: 1.2rem; }
+.device strong, .device small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.device small { margin-top: 3px; color: #a8a6b1; }
+.empty { padding: 22px 14px; margin: 0; color: #918f9c; text-align: center; }
+.viewer-panel { padding: 14px; min-width: 0; }
+.screen-shell { position: relative; display: grid; place-items: center; min-height: min(68dvh, 760px); overflow: hidden; border-radius: 18px; background: #000; touch-action: none; }
+#screen { display: none; width: 100%; height: 100%; max-height: min(74dvh, 820px); object-fit: contain; user-select: none; -webkit-user-select: none; }
+.placeholder { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; color: #777583; text-align: center; }
+.controls { display: grid; grid-template-columns: repeat(4, minmax(50px, 1fr)); gap: 9px; padding-top: 12px; }
+.controls button { min-height: 48px; border: 1px solid rgba(255,255,255,.12); border-radius: 14px; background: rgba(255,255,255,.08); color: #fff; }
+.controls button:active { transform: scale(.96); background: rgba(255,255,255,.16); }
+.controls .half { grid-column: span 2; }
+
+@media (max-width: 720px) {
+  main { padding-left: 12px; padding-right: 12px; }
+  .layout { grid-template-columns: 1fr; }
+  .devices-panel { overflow-x: auto; }
+  .devices { display: flex; min-width: max-content; }
+  .device { width: 210px; }
+  .empty { min-width: calc(100vw - 48px); }
+  .viewer-panel { padding: 8px; border-radius: 20px; }
+  .screen-shell { min-height: 54dvh; border-radius: 15px; }
+  #screen { max-height: 66dvh; }
+}
+
+@media (orientation: landscape) and (max-height: 600px) {
+  main { padding-top: 8px; }
+  header { margin-bottom: 8px; }
+  .layout { grid-template-columns: 180px minmax(0, 1fr); gap: 8px; }
+  .devices { display: grid; min-width: 0; }
+  .device { width: 100%; }
+  .screen-shell { min-height: calc(100dvh - 118px); }
+  #screen { max-height: calc(100dvh - 118px); }
+  .controls { position: absolute; right: 18px; bottom: 18px; width: min(420px, 60vw); padding: 8px; border-radius: 18px; background: rgba(12,12,18,.82); backdrop-filter: blur(18px); }
+  .viewer-panel { position: relative; }
+}

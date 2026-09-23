@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+    <meta name="theme-color" content="#0b0b10">
+    <title>StikServer</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <p class="eyebrow">StikServer</p>
+          <h1>Remote devices</h1>
+        </div>
+        <span id="status" class="status">Connecting</span>
+      </header>
+
+      <section class="layout">
+        <aside class="devices-panel">
+          <div id="devices" class="devices"></div>
+          <p id="empty" class="empty">Waiting for a StikDebug device…</p>
+        </aside>
+
+        <section class="viewer-panel">
+          <div id="screen-shell" class="screen-shell">
+            <img id="screen" alt="Remote device screen" draggable="false">
+            <div id="placeholder" class="placeholder">
+              <span>Choose a connected device</span>
+            </div>
+          </div>
+
+          <div class="controls" aria-label="Remote controls">
+            <button data-command="volumeDown" aria-label="Volume down">−</button>
+            <button data-command="home" aria-label="Home">●</button>
+            <button data-command="lock" aria-label="Lock">⌁</button>
+            <button data-command="volumeUp" aria-label="Volume up">＋</button>
+            <button data-command="softwareKeyboard" class="half">Keyboard</button>
+            <button id="fullscreen" class="half">Fullscreen</button>
+          </div>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
