@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 const MDNS_ADDRESS = "224.0.0.251";
 const MDNS_PORT = 5353;
 const SERVICE = "_remotepairing._tcp.local";
+const RECOVERY_INTERVAL = 12_000;
 
 function isRemotePairingInstance(name) {
   return String(name || "").toLowerCase().endsWith(`.${SERVICE}`);
@@ -124,12 +125,26 @@ export class RemotePairingDiscovery extends EventEmitter {
     this.socket = null;
     this.timer = null;
     this.expiryTimer = null;
+    this.recoveryTimer = null;
     this.instances = new Map();
     this.hostAddresses = new Map();
   }
 
   start() {
     if (this.socket) return;
+    this.openSocket();
+    this.timer = setInterval(() => this.query(), 5_000);
+    // macOS can leave the first multicast socket unable to receive packets when
+    // Local Network access is granted while the app is already running. Reopen
+    // it while no RemotePairing service has been found so discovery recovers
+    // without requiring the user to quit and relaunch StikServer.
+    this.recoveryTimer = setInterval(() => {
+      if (!this.instances.size) this.reopenSocket();
+    }, RECOVERY_INTERVAL);
+    this.expiryTimer = setInterval(() => this.expire(), 2_000);
+  }
+
+  openSocket() {
     const socket = dgram.createSocket({ type: "udp4", reuseAddr: true });
     this.socket = socket;
     socket.on("error", error => this.emit("error", error));
@@ -143,15 +158,23 @@ export class RemotePairingDiscovery extends EventEmitter {
       socket.setMulticastTTL(255);
       this.query();
     });
-    this.timer = setInterval(() => this.query(), 5_000);
-    this.expiryTimer = setInterval(() => this.expire(), 2_000);
+  }
+
+  reopenSocket() {
+    const previous = this.socket;
+    this.socket = null;
+    try { previous?.close(); }
+    catch {}
+    this.openSocket();
   }
 
   stop() {
     clearInterval(this.timer);
     clearInterval(this.expiryTimer);
+    clearInterval(this.recoveryTimer);
     this.timer = null;
     this.expiryTimer = null;
+    this.recoveryTimer = null;
     this.socket?.close();
     this.socket = null;
     this.instances.clear();
