@@ -65,6 +65,7 @@ struct ControlCommand {
     phase: Option<String>,
     x: Option<f64>,
     y: Option<f64>,
+    coordinate_space: Option<String>,
     text: Option<String>,
     pid: Option<u32>,
     pids: Option<Vec<u32>>,
@@ -157,9 +158,38 @@ async fn pair(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect();
+
+    // macOS can accept mdns-sd registration while local-network privacy still
+    // prevents the helper process from publishing it. Registering through the
+    // system Bonjour tool makes the service visible under the desktop app's
+    // already-approved network context.
+    #[cfg(target_os = "macos")]
+    let mut system_mdns = {
+        use std::process::Stdio;
+        let service_type = PAIRABLE_HOST_SERVICE_TYPE.trim_end_matches("local.");
+        let mut command = tokio::process::Command::new("/usr/bin/dns-sd");
+        command
+            .arg("-R")
+            .arg(&service_identifier)
+            .arg(service_type)
+            .arg("local.")
+            .arg(port.to_string());
+        for (key, value) in &txt {
+            command.arg(format!("{key}={value}"));
+        }
+        command
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?
+    };
+
+    #[cfg(not(target_os = "macos"))]
     let mdns = ServiceDaemon::new()?;
+    #[cfg(not(target_os = "macos"))]
     let _ = mdns.set_service_name_len_max(80);
+    #[cfg(not(target_os = "macos"))]
     let hostname = format!("stikserver-{}.local.", &service_identifier[..8]);
+    #[cfg(not(target_os = "macos"))]
     let service = ServiceInfo::new(
         PAIRABLE_HOST_SERVICE_TYPE,
         &service_identifier,
@@ -169,6 +199,7 @@ async fn pair(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> {
         &properties[..],
     )?
     .enable_addr_auto();
+    #[cfg(not(target_os = "macos"))]
     mdns.register(service)?;
     print_json_line(json!({ "type": "advertising" }))?;
 
@@ -180,6 +211,12 @@ async fn pair(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> {
     })
     .await?;
     pairing.write_to_file(&output).await?;
+    #[cfg(target_os = "macos")]
+    {
+        let _ = system_mdns.kill().await;
+        let _ = system_mdns.wait().await;
+    }
+    #[cfg(not(target_os = "macos"))]
     if let Ok(receiver) = mdns.shutdown() {
         let _ = tokio::task::spawn_blocking(move || receiver.recv_timeout(Duration::from_secs(2)))
             .await;
@@ -414,11 +451,13 @@ async fn handle_command(
                 Some("up") => TOUCHSCREEN_STATE_RELEASE,
                 _ => return Ok(None),
             };
-            let (x, y) = device_point(
-                command.x.unwrap_or(0.0),
-                command.y.unwrap_or(0.0),
-                interface_orientation,
-            );
+            let x = command.x.unwrap_or(0.0);
+            let y = command.y.unwrap_or(0.0);
+            let (x, y) = if command.coordinate_space.as_deref() == Some("device") {
+                (normalized(x), normalized(y))
+            } else {
+                device_point(x, y, interface_orientation)
+            };
             universal_hid.send_touchscreen(state, x, y, None).await?;
         }
         "home" => press_button(buttons, 0x0C, 0x40, 80).await?,
