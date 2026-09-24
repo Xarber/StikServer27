@@ -21,6 +21,8 @@ body {
 
 button { font: inherit; }
 button, input, select { font: inherit; }
+.icon { width: 1.15rem; height: 1.15rem; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+button:has(> .icon) { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
 main { width: min(1320px, 100%); min-height: 100dvh; margin: auto; padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(22px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); }
 header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: -18px -2px 18px; padding: 18px 2px 12px; background: rgba(16,17,20,.88); backdrop-filter: saturate(160%) blur(20px); }
 h1 { margin: 2px 0 0; font-size: clamp(1.65rem, 4vw, 2.15rem); letter-spacing: -.035em; }
@@ -63,10 +65,6 @@ h1 { margin: 2px 0 0; font-size: clamp(1.65rem, 4vw, 2.15rem); letter-spacing: -
 .controls .primary-control { grid-column: span 3; color: var(--accent); }
 .controls > .destructive { grid-column: span 3; }
 .controls .destructive, .destructive { color: #ff6961; }
-.live-input { grid-column: 1 / -1; display: grid; gap: 6px; color: #a8a6b1; font-size: .78rem; }
-.live-input textarea { width: 100%; min-height: 48px; resize: none; border: 0; border-radius: 12px; background: var(--control); color: #fff; padding: 13px 14px; font: inherit; }
-.live-input textarea:focus { outline: 2px solid rgba(126,112,255,.7); outline-offset: 1px; }
-.live-input textarea::placeholder { color: #888693; }
 .desktop-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 10px 12px; border: 1px solid rgba(125,115,255,.25); border-radius: 14px; background: rgba(100,85,238,.1); color: #c9c6dc; font-size: .84rem; }
 .desktop-actions[hidden] { display: none; }
 .desktop-actions button { min-height: 38px; padding: 7px 12px; border: 1px solid rgba(255,255,255,.14); border-radius: 11px; background: rgba(255,255,255,.09); color: #fff; }
@@ -85,10 +83,10 @@ h1 { margin: 2px 0 0; font-size: clamp(1.65rem, 4vw, 2.15rem); letter-spacing: -
 .fullscreen-controls:not(.expanded) { width: 86px; }
 .fullscreen-controls:not(.expanded) .controls-drag-handle { font-size: 1.05rem; text-align: center; }
 .hardware-controls { display: grid; grid-template-columns: repeat(4, minmax(68px, 1fr)); gap: 7px; }
-.fullscreen-actions { display: grid; grid-template-columns: repeat(5, minmax(76px, 1fr)); gap: 7px; }
+.fullscreen-actions { display: grid; grid-template-columns: repeat(4, minmax(68px, 1fr)); gap: 7px; }
 .hardware-controls button, .fullscreen-actions button { min-height: 42px; border: 0; border-radius: 11px; background: rgba(255,255,255,.1); color: #fff; }
 .fullscreen-actions .destructive { color: #ff6961; }
-.fullscreen-live-text { width: 100%; min-height: 42px; resize: none; border: 0; border-radius: 11px; background: rgba(255,255,255,.1); color: #fff; padding: 11px 12px; font: inherit; }
+.keyboard-capture { position: fixed; left: 50%; bottom: max(1px, env(safe-area-inset-bottom)); z-index: -1; width: 1px; height: 1px; min-height: 1px; padding: 0; border: 0; opacity: .01; pointer-events: none; resize: none; transform: translateX(-50%); }
 .toolbox { margin-top: 0; }
 .tool-tabs { display: flex; gap: 7px; overflow-x: auto; padding-bottom: 10px; scrollbar-width: none; }
 .tool-tabs::-webkit-scrollbar { display: none; }

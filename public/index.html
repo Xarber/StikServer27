@@ -27,12 +27,12 @@
 
         <section class="viewer-panel">
           <nav class="tool-tabs" aria-label="Device tools">
-            <button class="active" data-tool-tab="screen"><span aria-hidden="true">▣</span> Screen</button>
-            <button data-tool-tab="overview"><span aria-hidden="true">ⓘ</span> Overview</button>
-            <button data-tool-tab="processes"><span aria-hidden="true">⌘</span> Processes</button>
-            <button data-tool-tab="battery"><span aria-hidden="true">▱</span> Battery</button>
-            <button data-tool-tab="location"><span aria-hidden="true">⌖</span> Location</button>
-            <button data-tool-tab="advanced"><span aria-hidden="true">☷</span> Advanced</button>
+            <button class="active" data-tool-tab="screen"><svg class="icon" aria-hidden="true"><use href="/icons.svg#screen"/></svg> Screen</button>
+            <button data-tool-tab="overview"><svg class="icon" aria-hidden="true"><use href="/icons.svg#info"/></svg> Overview</button>
+            <button data-tool-tab="processes"><svg class="icon" aria-hidden="true"><use href="/icons.svg#processes"/></svg> Processes</button>
+            <button data-tool-tab="battery"><svg class="icon" aria-hidden="true"><use href="/icons.svg#battery"/></svg> Battery</button>
+            <button data-tool-tab="location"><svg class="icon" aria-hidden="true"><use href="/icons.svg#location"/></svg> Location</button>
+            <button data-tool-tab="advanced"><svg class="icon" aria-hidden="true"><use href="/icons.svg#sliders"/></svg> Advanced</button>
           </nav>
 
           <div class="tool-panel active screen-panel" data-tool-panel="screen">
@@ -43,53 +43,51 @@
             </div>
             <div id="fullscreen-controls" class="fullscreen-controls expanded" aria-label="Fullscreen remote controls">
               <div class="floating-control-header">
-                <span id="controls-drag-handle" class="controls-drag-handle" title="Drag controls" aria-label="Drag controls">⠿</span>
-                <button id="toggle-fullscreen-controls" type="button" aria-label="Collapse controls" title="Collapse controls">⌄</button>
+                <span id="controls-drag-handle" class="controls-drag-handle" title="Drag controls" aria-label="Drag controls"><svg class="icon" aria-hidden="true"><use href="/icons.svg#grip"/></svg></span>
+                <button id="toggle-fullscreen-controls" type="button" aria-label="Collapse controls" title="Collapse controls"><svg class="icon" aria-hidden="true"><use href="/icons.svg#chevron-down"/></svg></button>
               </div>
               <div class="floating-control-body">
                 <div class="hardware-controls">
-                  <button data-command="volumeDown" title="Volume down" aria-label="Volume down">−</button>
-                  <button data-command="home" title="Home" aria-label="Home">●</button>
-                  <button data-command="lock" title="Lock" aria-label="Lock">⌾</button>
-                  <button data-command="volumeUp" title="Volume up" aria-label="Volume up">＋</button>
-                  <button data-command="mute" title="Mute" aria-label="Mute">⊘</button>
-                  <button data-command="siri" title="Siri" aria-label="Siri">◉</button>
-                  <button data-command="rotateLeft" title="Rotate left" aria-label="Rotate left">↶</button>
-                  <button data-command="rotateRight" title="Rotate right" aria-label="Rotate right">↷</button>
+                  <button data-command="volumeDown" title="Volume down" aria-label="Volume down"><svg class="icon" aria-hidden="true"><use href="/icons.svg#volume-down"/></svg></button>
+                  <button data-command="home" title="Home" aria-label="Home"><svg class="icon" aria-hidden="true"><use href="/icons.svg#home"/></svg></button>
+                  <button data-command="lock" title="Lock" aria-label="Lock"><svg class="icon" aria-hidden="true"><use href="/icons.svg#lock"/></svg></button>
+                  <button data-command="volumeUp" title="Volume up" aria-label="Volume up"><svg class="icon" aria-hidden="true"><use href="/icons.svg#volume-up"/></svg></button>
+                  <button data-command="mute" title="Mute" aria-label="Mute"><svg class="icon" aria-hidden="true"><use href="/icons.svg#mute"/></svg></button>
+                  <button data-command="siri" title="Siri" aria-label="Siri"><svg class="icon" aria-hidden="true"><use href="/icons.svg#siri"/></svg></button>
+                  <button data-command="rotateLeft" title="Rotate left" aria-label="Rotate left"><svg class="icon" aria-hidden="true"><use href="/icons.svg#rotate-left"/></svg></button>
+                  <button data-command="rotateRight" title="Rotate right" aria-label="Rotate right"><svg class="icon" aria-hidden="true"><use href="/icons.svg#rotate-right"/></svg></button>
                 </div>
                 <div class="fullscreen-actions">
-                  <button data-command="softwareKeyboard" title="Toggle software keyboard" aria-label="Toggle software keyboard">⌨</button>
-                  <button data-focus-keyboard title="Type on device" aria-label="Type on device">T</button>
-                  <button data-screenshot title="Save screenshot" aria-label="Save screenshot">◎</button>
-                  <button data-fullscreen title="Exit fullscreen" aria-label="Exit fullscreen">⤡</button>
-                  <button data-disconnect class="destructive" title="Stop mirroring" aria-label="Stop mirroring">■</button>
+                  <button data-focus-keyboard title="Type on device" aria-label="Type on device"><svg class="icon" aria-hidden="true"><use href="/icons.svg#keyboard"/></svg></button>
+                  <button data-screenshot title="Save screenshot" aria-label="Save screenshot"><svg class="icon" aria-hidden="true"><use href="/icons.svg#camera"/></svg></button>
+                  <button data-fullscreen title="Exit fullscreen" aria-label="Exit fullscreen"><svg class="icon" aria-hidden="true"><use href="/icons.svg#exit-fullscreen"/></svg></button>
+                  <button data-disconnect class="destructive" title="Stop mirroring" aria-label="Stop mirroring"><svg class="icon" aria-hidden="true"><use href="/icons.svg#stop"/></svg></button>
                 </div>
-                <textarea class="live-text fullscreen-live-text" rows="1" autocomplete="off" autocapitalize="sentences" spellcheck="false" placeholder="Type directly on the device" aria-label="Type directly on the remote device"></textarea>
               </div>
             </div>
           </div>
 
           <div class="controls" aria-label="Remote controls">
-            <button data-view-screen class="primary-control"><span aria-hidden="true">▣</span> View Screen</button>
-            <button data-disconnect class="destructive"><span aria-hidden="true">■</span> Stop Mirroring</button>
-            <button data-command="volumeDown" title="Lower the device volume" aria-label="Volume down">−</button>
-            <button data-command="home" title="Press the Home button" aria-label="Home">●</button>
-            <button data-command="lock" title="Press the device lock button" aria-label="Lock">⌾</button>
-            <button data-command="volumeUp" title="Raise the device volume" aria-label="Volume up">＋</button>
-            <button data-command="rotateLeft" title="Rotate the device left" aria-label="Rotate left">↶</button>
-            <button data-command="rotateRight" title="Rotate the device right" aria-label="Rotate right">↷</button>
-            <button data-command="softwareKeyboard" title="Toggle device keyboard" aria-label="Toggle device keyboard">⌨</button>
-            <button data-fullscreen title="Fullscreen" aria-label="Fullscreen">⤢</button>
+            <button data-view-screen class="primary-control"><svg class="icon" aria-hidden="true"><use href="/icons.svg#screen"/></svg> View Screen</button>
+            <button data-disconnect class="destructive"><svg class="icon" aria-hidden="true"><use href="/icons.svg#stop"/></svg> Stop Mirroring</button>
+            <button data-command="volumeDown" title="Lower the device volume" aria-label="Volume down"><svg class="icon" aria-hidden="true"><use href="/icons.svg#volume-down"/></svg></button>
+            <button data-command="home" title="Press the Home button" aria-label="Home"><svg class="icon" aria-hidden="true"><use href="/icons.svg#home"/></svg></button>
+            <button data-command="lock" title="Press the device lock button" aria-label="Lock"><svg class="icon" aria-hidden="true"><use href="/icons.svg#lock"/></svg></button>
+            <button data-command="volumeUp" title="Raise the device volume" aria-label="Volume up"><svg class="icon" aria-hidden="true"><use href="/icons.svg#volume-up"/></svg></button>
+            <button data-command="rotateLeft" title="Rotate the device left" aria-label="Rotate left"><svg class="icon" aria-hidden="true"><use href="/icons.svg#rotate-left"/></svg></button>
+            <button data-command="rotateRight" title="Rotate the device right" aria-label="Rotate right"><svg class="icon" aria-hidden="true"><use href="/icons.svg#rotate-right"/></svg></button>
+            <button data-focus-keyboard title="Type on device" aria-label="Type on device"><svg class="icon" aria-hidden="true"><use href="/icons.svg#keyboard"/></svg></button>
+            <button data-fullscreen title="Fullscreen" aria-label="Fullscreen"><svg class="icon" aria-hidden="true"><use href="/icons.svg#fullscreen"/></svg></button>
             <button id="pair" class="wide" hidden>Pair with StikServer</button>
             <button id="import-pairing" class="wide" hidden>Import pairing file</button>
             <input id="pairing-file" type="file" accept=".plist,application/x-plist,application/xml,text/xml" hidden>
-            <label class="live-input"><span>Live keyboard input</span><textarea class="live-text" rows="1" autocomplete="off" autocapitalize="sentences" spellcheck="false" placeholder="Tap here, then type directly on the device" aria-label="Type directly on the remote device"></textarea></label>
             <details class="more-controls" open>
               <summary>More controls</summary>
               <div>
-                <button data-command="mute"><span aria-hidden="true">⊘</span> Mute</button>
-                <button data-command="siri"><span aria-hidden="true">◉</span> Siri</button>
-                <button data-screenshot type="button"><span aria-hidden="true">◎</span> Screenshot</button>
+                <button data-command="mute"><svg class="icon" aria-hidden="true"><use href="/icons.svg#mute"/></svg> Mute</button>
+                <button data-command="siri"><svg class="icon" aria-hidden="true"><use href="/icons.svg#siri"/></svg> Siri</button>
+                <button data-command="softwareKeyboard"><svg class="icon" aria-hidden="true"><use href="/icons.svg#keyboard"/></svg> Toggle Device Keyboard</button>
+                <button data-screenshot type="button"><svg class="icon" aria-hidden="true"><use href="/icons.svg#camera"/></svg> Screenshot</button>
               </div>
             </details>
           </div>
@@ -108,7 +106,7 @@
             <div class="tool-panel" data-tool-panel="overview">
               <div class="panel-heading">
                 <div><h2>Device overview</h2><p>Hardware, networking, diagnostics and a live performance sample.</p></div>
-                <button class="icon-button" data-refresh-tab="overview" title="Refresh overview" aria-label="Refresh overview">↻</button>
+                <button class="icon-button" data-refresh-tab="overview" title="Refresh overview" aria-label="Refresh overview"><svg class="icon" aria-hidden="true"><use href="/icons.svg#refresh"/></svg></button>
               </div>
               <div class="button-row"><button data-action="performance">Performance</button><button data-action="graphics">Graphics &amp; FPS</button><button data-action="networkActivity">Network activity</button><button data-action="diagnostics">Diagnostics</button></div>
               <form id="energy-form" class="inline-form"><input id="energy-pids" inputmode="numeric" placeholder="Energy PIDs, comma-separated" aria-label="Process IDs for energy sampling"><button type="submit">Sample energy</button></form>
@@ -118,7 +116,7 @@
             <div class="tool-panel" data-tool-panel="processes">
               <div class="panel-heading">
                 <div><h2>Processes</h2><p>Inspect running processes and terminate a selected PID.</p></div>
-                <button class="icon-button" data-refresh-tab="processes" title="Refresh processes" aria-label="Refresh processes">↻</button>
+                <button class="icon-button" data-refresh-tab="processes" title="Refresh processes" aria-label="Refresh processes"><svg class="icon" aria-hidden="true"><use href="/icons.svg#refresh"/></svg></button>
               </div>
               <input id="process-filter" type="search" placeholder="Filter processes" aria-label="Filter processes">
               <div id="process-list" class="process-list"><p class="muted">Choose a ready device.</p></div>
@@ -127,7 +125,7 @@
             <div class="tool-panel" data-tool-panel="battery">
               <div class="panel-heading">
                 <div><h2>Battery health</h2><p>StikServer automatically downloads the device's available Analytics history and keeps it up to date.</p></div>
-                <button class="icon-button" data-refresh-tab="battery" title="Refresh battery history" aria-label="Refresh battery history">↻</button>
+                <button class="icon-button" data-refresh-tab="battery" title="Refresh battery history" aria-label="Refresh battery history"><svg class="icon" aria-hidden="true"><use href="/icons.svg#refresh"/></svg></button>
               </div>
               <div id="battery-metrics" class="metric-grid"></div>
               <svg id="battery-chart" class="battery-chart" viewBox="0 0 600 180" role="img" aria-label="Battery health history"></svg>
@@ -147,7 +145,7 @@
             <div class="tool-panel" data-tool-panel="advanced">
               <div class="panel-heading">
                 <div><h2>Advanced environment</h2><p>Xcode-style appearance, accessibility, throttling and power controls.</p></div>
-                <button class="icon-button" data-refresh-tab="advanced" title="Refresh settings and conditions" aria-label="Refresh settings and conditions">↻</button>
+                <button class="icon-button" data-refresh-tab="advanced" title="Refresh settings and conditions" aria-label="Refresh settings and conditions"><svg class="icon" aria-hidden="true"><use href="/icons.svg#refresh"/></svg></button>
               </div>
               <div class="advanced-grid">
                 <fieldset>
@@ -187,6 +185,7 @@
           </section>
         </section>
       </section>
+      <textarea id="remote-keyboard-capture" class="live-text keyboard-capture" rows="1" inputmode="text" autocomplete="off" autocapitalize="sentences" spellcheck="false" aria-label="Type directly on the remote device"></textarea>
     </main>
     <dialog id="pairing-dialog" class="pairing-dialog">
       <form method="dialog">

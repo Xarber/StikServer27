@@ -72,7 +72,6 @@ function send(value) {
 function renderDevices(devices) {
   knownDevices = devices;
   if (devices.length) clearTimeout(discoveryHelpTimer);
-  devicesElement.replaceChildren();
   empty.hidden = devices.length > 0;
   if (!devices.length && empty.textContent.startsWith("No devices found")) {
     // Preserve the actionable permission message after the initial search timeout.
@@ -80,12 +79,22 @@ function renderDevices(devices) {
     empty.textContent = "Searching the local network for iPhone and iPad devices…";
   }
   if (selectedDevice && !devices.some(device => device.id === selectedDevice)) selectDevice(null);
+  const existing = new Map(
+    [...devicesElement.querySelectorAll(".device[data-device-id]")]
+      .map(button => [button.dataset.deviceId, button])
+  );
+  const orderedButtons = [];
   for (const device of devices) {
-    const button = document.createElement("button");
+    let button = existing.get(device.id);
+    if (!button) {
+      button = document.createElement("button");
+      button.innerHTML = `<span class="device-icon" aria-hidden="true"></span><span><strong></strong><small class="device-state"></small><small class="device-identifier"></small></span>`;
+      button.addEventListener("click", () => selectDevice(button.dataset.deviceId));
+    }
     button.className = `device${device.id === selectedDevice ? " selected" : ""}`;
     button.dataset.deviceId = device.id;
     const iconKind = device.kind === "iPad" ? "ipad" : "iphone";
-    button.innerHTML = `<span class="device-icon ${iconKind}" aria-hidden="true"></span><span><strong></strong><small class="device-state"></small><small class="device-identifier"></small></span>`;
+    button.querySelector(".device-icon").className = `device-icon ${iconKind}`;
     button.querySelector("strong").textContent = device.name;
     button.querySelector(".device-state").textContent = device.controllable
       ? `${device.kind} · Ready`
@@ -93,9 +102,15 @@ function renderDevices(devices) {
     const identifier = device.serviceIdentifier || device.pairingIdentifier || device.id;
     button.querySelector(".device-identifier").textContent = identifier;
     button.querySelector(".device-identifier").title = identifier;
-    if (!device.controllable) button.title = device.backendMessage || "Pair this device with StikServer";
-    button.addEventListener("click", () => selectDevice(device.id));
-    devicesElement.append(button);
+    button.title = device.controllable ? "" : device.backendMessage || "Pair this device with StikServer";
+    orderedButtons.push(button);
+    existing.delete(device.id);
+  }
+  existing.values().forEach(button => button.remove());
+  const currentOrder = [...devicesElement.children].map(button => button.dataset.deviceId);
+  const desiredOrder = orderedButtons.map(button => button.dataset.deviceId);
+  if (currentOrder.join("\u0000") !== desiredOrder.join("\u0000")) {
+    orderedButtons.forEach(button => devicesElement.append(button));
   }
 }
 
@@ -295,7 +310,9 @@ function clearCurrentFrame() {
 }
 
 document.querySelectorAll("[data-focus-keyboard]").forEach(button => button.addEventListener("click", () => {
-  document.querySelector(".fullscreen-live-text")?.focus();
+  const capture = document.querySelector("#remote-keyboard-capture");
+  capture.value = "";
+  capture.focus({ preventScroll: true });
 }));
 
 installFloatingControls();
@@ -306,7 +323,7 @@ function installFloatingControls() {
   const handle = document.querySelector("#controls-drag-handle");
   toggle.addEventListener("click", () => {
     const expanded = palette.classList.toggle("expanded");
-    toggle.textContent = expanded ? "⌄" : "⌃";
+    toggle.querySelector("use")?.setAttribute("href", expanded ? "/icons.svg#chevron-down" : "/icons.svg#chevron-up");
     toggle.setAttribute("aria-label", expanded ? "Collapse controls" : "Expand controls");
   });
   let drag = null;
