@@ -304,15 +304,28 @@ async fn stream(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> 
     // CrashReportCopyMobile is independent from the display and DVT channels.
     // Keep it on a worker so downloading the complete Analytics history never
     // stalls video, touch input, or other device commands.
-    let crash_reports =
-        CrashReportCopyMobileClient::connect_rsd(&mut handle, &mut handshake).await?;
-    let (battery_request_tx, battery_request_rx) = mpsc::channel(1);
     let (battery_event_tx, mut battery_event_rx) = mpsc::channel(1);
-    tokio::spawn(battery_analytics_worker(
-        crash_reports,
-        battery_request_rx,
-        battery_event_tx,
-    ));
+    let battery_request_tx =
+        match CrashReportCopyMobileClient::connect_rsd(&mut handle, &mut handshake).await {
+            Ok(crash_reports) => {
+                let (request_tx, request_rx) = mpsc::channel(1);
+                tokio::spawn(battery_analytics_worker(
+                    crash_reports,
+                    request_rx,
+                    battery_event_tx,
+                ));
+                Some(request_tx)
+            }
+            Err(error) => {
+                let _ = battery_event_tx
+                    .send(json!({
+                        "type": "batteryAnalyticsError",
+                        "message": format!("Battery Analytics is unavailable: {error}")
+                    }))
+                    .await;
+                None
+            }
+        };
 
     let mut stdin_lines = BufReader::new(tokio::io::stdin()).lines();
     let mut output = tokio::io::stdout();
@@ -320,7 +333,9 @@ async fn stream(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> 
     let mut orientation_interval = tokio::time::interval(Duration::from_millis(750));
     let mut interface_orientation = InterfaceOrientation::Unknown;
     write_event(&mut output, json!({ "type": "ready" })).await?;
-    let _ = battery_request_tx.try_send(());
+    if let Some(requests) = &battery_request_tx {
+        let _ = requests.try_send(());
+    }
 
     loop {
         tokio::select! {
@@ -344,10 +359,17 @@ async fn stream(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> 
                 if command.command == "stop" { break; }
                 let command_name = command.command.clone();
                 if command.command == "batteryAnalytics" {
-                    let event = match battery_request_tx.try_send(()) {
-                        Ok(()) => command_result("batteryAnalytics", json!({ "syncing": true })),
-                        Err(mpsc::error::TrySendError::Full(_)) => command_result("batteryAnalytics", json!({ "syncing": true })),
-                        Err(mpsc::error::TrySendError::Closed(_)) => json!({
+                    let event = match &battery_request_tx {
+                        Some(requests) => match requests.try_send(()) {
+                            Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => command_result("batteryAnalytics", json!({ "syncing": true })),
+                            Err(mpsc::error::TrySendError::Closed(_)) => json!({
+                                "type": "commandResult",
+                                "command": "batteryAnalytics",
+                                "ok": false,
+                                "message": "Battery Analytics reader is unavailable"
+                            }),
+                        },
+                        None => json!({
                             "type": "commandResult",
                             "command": "batteryAnalytics",
                             "ok": false,
