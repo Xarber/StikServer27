@@ -26,6 +26,16 @@
         </aside>
 
         <section class="viewer-panel">
+          <nav class="tool-tabs" aria-label="Device tools">
+            <button class="active" data-tool-tab="screen"><span aria-hidden="true">▣</span> Screen</button>
+            <button data-tool-tab="overview"><span aria-hidden="true">ⓘ</span> Overview</button>
+            <button data-tool-tab="processes"><span aria-hidden="true">⌘</span> Processes</button>
+            <button data-tool-tab="battery"><span aria-hidden="true">▱</span> Battery</button>
+            <button data-tool-tab="location"><span aria-hidden="true">⌖</span> Location</button>
+            <button data-tool-tab="advanced"><span aria-hidden="true">☷</span> Advanced</button>
+          </nav>
+
+          <div class="tool-panel active screen-panel" data-tool-panel="screen">
           <div id="screen-shell" class="screen-shell">
             <img id="screen" alt="Remote device screen" draggable="false">
             <div id="placeholder" class="placeholder">
@@ -33,26 +43,26 @@
             </div>
             <div id="fullscreen-controls" class="fullscreen-controls expanded" aria-label="Fullscreen remote controls">
               <div class="floating-control-header">
-                <span id="controls-drag-handle" class="controls-drag-handle" title="Drag controls">StikDebug Controls</span>
+                <span id="controls-drag-handle" class="controls-drag-handle" title="Drag controls" aria-label="Drag controls">⠿</span>
                 <button id="toggle-fullscreen-controls" type="button" aria-label="Collapse controls" title="Collapse controls">⌄</button>
               </div>
               <div class="floating-control-body">
                 <div class="hardware-controls">
-                  <button data-command="volumeDown" title="Volume down">Volume −</button>
-                  <button data-command="home" title="Home">Home</button>
-                  <button data-command="lock" title="Lock">Lock</button>
-                  <button data-command="volumeUp" title="Volume up">Volume +</button>
-                  <button data-command="mute">Mute</button>
-                  <button data-command="siri">Siri</button>
-                  <button data-command="rotateLeft">Rotate left</button>
-                  <button data-command="rotateRight">Rotate right</button>
+                  <button data-command="volumeDown" title="Volume down" aria-label="Volume down">−</button>
+                  <button data-command="home" title="Home" aria-label="Home">●</button>
+                  <button data-command="lock" title="Lock" aria-label="Lock">⌾</button>
+                  <button data-command="volumeUp" title="Volume up" aria-label="Volume up">＋</button>
+                  <button data-command="mute" title="Mute" aria-label="Mute">⊘</button>
+                  <button data-command="siri" title="Siri" aria-label="Siri">◉</button>
+                  <button data-command="rotateLeft" title="Rotate left" aria-label="Rotate left">↶</button>
+                  <button data-command="rotateRight" title="Rotate right" aria-label="Rotate right">↷</button>
                 </div>
                 <div class="fullscreen-actions">
-                  <button data-command="softwareKeyboard">Device keyboard</button>
-                  <button data-focus-keyboard>Type</button>
-                  <button data-screenshot>Screenshot</button>
-                  <button data-fullscreen>Exit fullscreen</button>
-                  <button data-disconnect class="destructive">Stop mirroring</button>
+                  <button data-command="softwareKeyboard" title="Toggle software keyboard" aria-label="Toggle software keyboard">⌨</button>
+                  <button data-focus-keyboard title="Type on device" aria-label="Type on device">T</button>
+                  <button data-screenshot title="Save screenshot" aria-label="Save screenshot">◎</button>
+                  <button data-fullscreen title="Exit fullscreen" aria-label="Exit fullscreen">⤡</button>
+                  <button data-disconnect class="destructive" title="Stop mirroring" aria-label="Stop mirroring">■</button>
                 </div>
                 <textarea class="live-text fullscreen-live-text" rows="1" autocomplete="off" autocapitalize="sentences" spellcheck="false" placeholder="Type directly on the device" aria-label="Type directly on the remote device"></textarea>
               </div>
@@ -60,14 +70,16 @@
           </div>
 
           <div class="controls" aria-label="Remote controls">
-            <button data-command="volumeDown" title="Lower the device volume">Volume −</button>
-            <button data-command="home" title="Press the Home button">Home</button>
-            <button data-command="lock" title="Press the device lock button">Lock</button>
-            <button data-command="volumeUp" title="Raise the device volume">Volume +</button>
-            <button data-command="rotateLeft" title="Rotate the device left">Rotate left</button>
-            <button data-command="rotateRight" title="Rotate the device right">Rotate right</button>
-            <button data-command="softwareKeyboard">Device keyboard</button>
-            <button data-fullscreen>Fullscreen</button>
+            <button data-view-screen class="primary-control"><span aria-hidden="true">▣</span> View Screen</button>
+            <button data-disconnect class="destructive"><span aria-hidden="true">■</span> Stop Mirroring</button>
+            <button data-command="volumeDown" title="Lower the device volume" aria-label="Volume down">−</button>
+            <button data-command="home" title="Press the Home button" aria-label="Home">●</button>
+            <button data-command="lock" title="Press the device lock button" aria-label="Lock">⌾</button>
+            <button data-command="volumeUp" title="Raise the device volume" aria-label="Volume up">＋</button>
+            <button data-command="rotateLeft" title="Rotate the device left" aria-label="Rotate left">↶</button>
+            <button data-command="rotateRight" title="Rotate the device right" aria-label="Rotate right">↷</button>
+            <button data-command="softwareKeyboard" title="Toggle device keyboard" aria-label="Toggle device keyboard">⌨</button>
+            <button data-fullscreen title="Fullscreen" aria-label="Fullscreen">⤢</button>
             <button id="pair" class="wide" hidden>Pair with StikServer</button>
             <button id="import-pairing" class="wide" hidden>Import pairing file</button>
             <input id="pairing-file" type="file" accept=".plist,application/x-plist,application/xml,text/xml" hidden>
@@ -75,10 +87,9 @@
             <details class="more-controls" open>
               <summary>More controls</summary>
               <div>
-                <button data-command="mute">Mute</button>
-                <button data-command="siri">Siri</button>
-                <button data-screenshot type="button">Save screenshot</button>
-                <button data-disconnect type="button" class="destructive">Stop mirroring</button>
+                <button data-command="mute"><span aria-hidden="true">⊘</span> Mute</button>
+                <button data-command="siri"><span aria-hidden="true">◉</span> Siri</button>
+                <button data-screenshot type="button"><span aria-hidden="true">◎</span> Screenshot</button>
               </div>
             </details>
           </div>
@@ -87,21 +98,15 @@
             <span>StikServer is running on this computer.</span>
             <button id="copy-remote-link" type="button">Copy remote access link</button>
           </div>
+          </div>
 
           <section class="toolbox" aria-label="Device tools">
-            <nav class="tool-tabs" aria-label="Tool categories">
-              <button class="active" data-tool-tab="overview">Overview</button>
-              <button data-tool-tab="processes">Processes</button>
-              <button data-tool-tab="battery">Battery</button>
-              <button data-tool-tab="location">Location</button>
-              <button data-tool-tab="advanced">Advanced</button>
-            </nav>
-
-            <div class="tool-panel active" data-tool-panel="overview">
+            <div class="tool-panel" data-tool-panel="overview">
               <div class="panel-heading">
                 <div><h2>Device overview</h2><p>Hardware, networking, diagnostics and a live performance sample.</p></div>
-                <div class="button-row"><button data-action="deviceInfo">Refresh info</button><button data-action="performance">Performance</button><button data-action="graphics">Graphics & FPS</button><button data-action="networkActivity">Network activity</button><button data-action="diagnostics">Diagnostics</button></div>
+                <button class="icon-button" data-refresh-tab="overview" title="Refresh overview" aria-label="Refresh overview">↻</button>
               </div>
+              <div class="button-row"><button data-action="performance">Performance</button><button data-action="graphics">Graphics &amp; FPS</button><button data-action="networkActivity">Network activity</button><button data-action="diagnostics">Diagnostics</button></div>
               <form id="energy-form" class="inline-form"><input id="energy-pids" inputmode="numeric" placeholder="Energy PIDs, comma-separated" aria-label="Process IDs for energy sampling"><button type="submit">Sample energy</button></form>
               <pre id="overview-output" class="data-output">Select a ready device.</pre>
             </div>
@@ -109,16 +114,16 @@
             <div class="tool-panel" data-tool-panel="processes">
               <div class="panel-heading">
                 <div><h2>Processes</h2><p>Inspect running processes and terminate a selected PID.</p></div>
-                <button data-action="processes">Refresh</button>
+                <button class="icon-button" data-refresh-tab="processes" title="Refresh processes" aria-label="Refresh processes">↻</button>
               </div>
               <input id="process-filter" type="search" placeholder="Filter processes" aria-label="Filter processes">
-              <div id="process-list" class="process-list"><p class="muted">Load the running process list to begin.</p></div>
+              <div id="process-list" class="process-list"><p class="muted">Choose a ready device.</p></div>
             </div>
 
             <div class="tool-panel" data-tool-panel="battery">
               <div class="panel-heading">
                 <div><h2>Battery health</h2><p>StikServer automatically downloads the device's available Analytics history and keeps it up to date.</p></div>
-                <button data-action="batteryAnalytics">Refresh Analytics</button>
+                <button class="icon-button" data-refresh-tab="battery" title="Refresh battery history" aria-label="Refresh battery history">↻</button>
               </div>
               <div id="battery-metrics" class="metric-grid"></div>
               <svg id="battery-chart" class="battery-chart" viewBox="0 0 600 180" role="img" aria-label="Battery health history"></svg>
@@ -138,7 +143,7 @@
             <div class="tool-panel" data-tool-panel="advanced">
               <div class="panel-heading">
                 <div><h2>Advanced environment</h2><p>Xcode-style appearance, accessibility, throttling and power controls.</p></div>
-                <div class="button-row"><button data-action="configuration">Refresh settings</button><button data-action="conditions">Load conditions</button></div>
+                <button class="icon-button" data-refresh-tab="advanced" title="Refresh settings and conditions" aria-label="Refresh settings and conditions">↻</button>
               </div>
               <div class="advanced-grid">
                 <fieldset>
@@ -165,7 +170,7 @@
                 </fieldset>
                 <fieldset>
                   <legend>Device conditions</legend>
-                  <select id="condition-profile"><option value="">Load available conditions first</option></select>
+                  <select id="condition-profile"><option value="">Choose a condition profile</option></select>
                   <div class="button-row"><button id="enable-condition" type="button">Enable</button><button id="disable-condition" type="button">Disable</button></div>
                 </fieldset>
                 <fieldset>
@@ -173,7 +178,7 @@
                   <div class="button-row"><button data-danger-command="sleep">Sleep</button><button data-danger-command="restart">Restart</button><button data-danger-command="shutdown">Shut down</button></div>
                 </fieldset>
               </div>
-              <pre id="advanced-output" class="data-output">Load settings or conditions to begin.</pre>
+              <pre id="advanced-output" class="data-output">Choose a ready device.</pre>
             </div>
           </section>
         </section>

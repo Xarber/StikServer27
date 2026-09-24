@@ -95,6 +95,7 @@ class WebSocketPeer {
     this.deviceId = null;
     this.subscription = null;
     this.subscriptionRequest = 0;
+    this.commandDevices = new Set();
     socket.on("data", chunk => this.receive(chunk));
     socket.on("close", () => this.finish());
     socket.on("error", () => this.finish());
@@ -272,8 +273,10 @@ class WebSocketPeer {
       if (!agent) {
         const direct = directDevices.find(device => device.id === id);
         if (!direct) return sendJSON(this, { type: "error", message: "Device is offline" });
-        try { nativeDevices.send(id, message); }
-        catch (error) { sendJSON(this, { type: "error", message: error.message }); }
+        this.commandDevices.add(id);
+        nativeDevices.start(direct)
+          .then(() => nativeDevices.send(id, message))
+          .catch(error => sendJSON(this, { type: "error", message: error.message }));
         return;
       }
       sendJSON(agent, { ...message, deviceId: id });
@@ -321,13 +324,17 @@ class WebSocketPeer {
     }
     this.deviceId = null;
     this.subscription = null;
+    const commandDevices = [...this.commandDevices];
+    this.commandDevices.clear();
     stopDirectIfUnused(previousSubscription);
+    commandDevices.forEach(stopDirectIfUnused);
   }
 }
 
 function stopDirectIfUnused(deviceId) {
   if (!deviceId || agents.has(deviceId)) return;
   if ([...viewers].some(viewer => !viewer.closed && viewer.subscription === deviceId)) return;
+  if ([...viewers].some(viewer => !viewer.closed && viewer.commandDevices.has(deviceId))) return;
   nativeDevices.stop(deviceId);
 }
 
@@ -431,18 +438,24 @@ nativeDevices.on("frame", (deviceId, frame) => {
 });
 nativeDevices.on("event", (deviceId, event) => {
   for (const viewer of viewers) {
-    if (viewer.subscription === deviceId) sendJSON(viewer, { type: "deviceEvent", deviceId, event });
+    if (viewer.subscription === deviceId || viewer.commandDevices.has(deviceId)) {
+      sendJSON(viewer, { type: "deviceEvent", deviceId, event });
+    }
   }
   if (event.type === "batteryAnalytics") {
     batteryHistory.merge(deviceId, event.history).then(history => {
       for (const viewer of viewers) {
-        if (viewer.subscription === deviceId) sendJSON(viewer, { type: "deviceEvent", deviceId, event: { type: "batteryHistory", history } });
+        if (viewer.subscription === deviceId || viewer.commandDevices.has(deviceId)) {
+          sendJSON(viewer, { type: "deviceEvent", deviceId, event: { type: "batteryHistory", history } });
+        }
       }
     }).catch(error => console.warn(`Battery Analytics history: ${error.message}`));
   } else if (event.type === "battery") {
     batteryHistory.record(deviceId, event.data).then(history => {
       for (const viewer of viewers) {
-        if (viewer.subscription === deviceId) sendJSON(viewer, { type: "deviceEvent", deviceId, event: { type: "batteryHistory", history } });
+        if (viewer.subscription === deviceId || viewer.commandDevices.has(deviceId)) {
+          sendJSON(viewer, { type: "deviceEvent", deviceId, event: { type: "batteryHistory", history } });
+        }
       }
     }).catch(error => console.warn(`Battery history: ${error.message}`));
   }

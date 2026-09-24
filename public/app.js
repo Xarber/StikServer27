@@ -24,6 +24,7 @@ let currentOrientation = "portrait";
 let runningProcesses = [];
 let latestBattery = null;
 let batterySamples = [];
+let mirroringDevice = null;
 const discoveryHelpTimer = setTimeout(() => {
   if (!knownDevices.length) {
     empty.textContent = "No devices found. On macOS, allow StikServer in System Settings › Privacy & Security › Local Network, then reopen the app. The iPhone or iPad must be on the same local network.";
@@ -99,12 +100,12 @@ function renderDevices(devices) {
 }
 
 function selectDevice(id) {
+  if (mirroringDevice && mirroringDevice !== id) stopMirroring();
   selectedDevice = id;
   currentOrientation = "portrait";
   clearCurrentFrame();
   applyScreenOrientation();
   const device = knownDevices.find(candidate => candidate.id === id);
-  send({ type: "subscribe", deviceId: device?.controllable ? id : null });
   placeholder.hidden = false;
   pairButton.hidden = !device || device.mode !== "direct" || device.paired;
   importPairingButton.hidden = !device || device.mode !== "direct" || device.paired;
@@ -112,7 +113,7 @@ function selectDevice(id) {
     placeholder.hidden = false;
     placeholder.querySelector("span").textContent = device.backendMessage || "Pair this device to control it";
   } else {
-    placeholder.querySelector("span").textContent = id ? "Connecting to device…" : "Choose a connected device";
+    placeholder.querySelector("span").textContent = id ? "Ready to view this device" : "Choose a connected device";
   }
   if (!id) {
     clearCurrentFrame();
@@ -126,12 +127,14 @@ function selectDevice(id) {
   renderProcesses();
   renderBatteryHistory();
   if (id) send({ type: "batteryHistory", deviceId: id });
+  refreshTab(document.querySelector("[data-tool-tab].active")?.dataset.toolTab || "screen");
 }
 
 function handleSubscription(deviceId) {
   if (!selectedDevice || deviceId !== selectedDevice) return;
   placeholder.hidden = false;
   placeholder.querySelector("span").textContent = "Waiting for display…";
+  mirroringDevice = deviceId;
   showStatus("Connected to device", true);
 }
 
@@ -250,7 +253,8 @@ async function toggleFullscreen() {
 document.addEventListener("fullscreenchange", () => {
   applyScreenOrientation();
   document.querySelectorAll("[data-fullscreen]").forEach(button => {
-    button.textContent = document.fullscreenElement ? "Exit fullscreen" : "Fullscreen";
+    button.title = document.fullscreenElement ? "Exit fullscreen" : "Fullscreen";
+    button.setAttribute("aria-label", button.title);
   });
 });
 
@@ -262,13 +266,26 @@ document.querySelectorAll("[data-screenshot]").forEach(button => button.addEvent
   link.click();
 }));
 
-document.querySelectorAll("[data-disconnect]").forEach(button => button.addEventListener("click", () => {
+document.querySelectorAll("[data-view-screen]").forEach(button => button.addEventListener("click", startMirroring));
+document.querySelectorAll("[data-disconnect]").forEach(button => button.addEventListener("click", stopMirroring));
+
+function startMirroring() {
+  const device = knownDevices.find(candidate => candidate.id === selectedDevice);
+  if (!device) return showStatus("Choose a device first", false);
+  if (!device.controllable) return showStatus(device.backendMessage || "Pair this device first", false);
+  placeholder.hidden = false;
+  placeholder.querySelector("span").textContent = "Connecting to device…";
+  send({ type: "subscribe", deviceId: device.id });
+}
+
+function stopMirroring() {
   send({ type: "unsubscribe" });
+  mirroringDevice = null;
   clearCurrentFrame();
   placeholder.hidden = false;
-  placeholder.querySelector("span").textContent = "Mirroring stopped. Select the device again to reconnect.";
+  placeholder.querySelector("span").textContent = selectedDevice ? "Mirroring stopped" : "Choose a connected device";
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-}));
+}
 
 function clearCurrentFrame() {
   if (currentFrameURL) URL.revokeObjectURL(currentFrameURL);
@@ -437,8 +454,30 @@ document.querySelectorAll("[data-tool-tab]").forEach(button => {
   button.addEventListener("click", () => {
     document.querySelectorAll("[data-tool-tab]").forEach(item => item.classList.toggle("active", item === button));
     document.querySelectorAll("[data-tool-panel]").forEach(panel => panel.classList.toggle("active", panel.dataset.toolPanel === button.dataset.toolTab));
+    refreshTab(button.dataset.toolTab);
   });
 });
+
+document.querySelectorAll("[data-refresh-tab]").forEach(button => {
+  button.addEventListener("click", () => refreshTab(button.dataset.refreshTab, true));
+});
+
+function refreshTab(tab, manual = false) {
+  if (!selectedDevice || tab === "screen" || tab === "location") return;
+  if (tab === "overview") {
+    command("deviceInfo");
+    command("performance");
+  } else if (tab === "processes") {
+    command("processes");
+  } else if (tab === "battery") {
+    send({ type: "batteryHistory", deviceId: selectedDevice });
+    command("batteryAnalytics");
+  } else if (tab === "advanced") {
+    command("configuration");
+    command("conditions");
+  }
+  if (manual) showStatus("Refreshing…", true);
+}
 
 document.querySelectorAll("[data-action]").forEach(button => {
   button.addEventListener("click", () => command(button.dataset.action));
@@ -461,7 +500,7 @@ function renderProcesses() {
   if (!matches.length) {
     const emptyRow = document.createElement("p");
     emptyRow.className = "muted";
-    emptyRow.textContent = runningProcesses.length ? "No matching processes." : "Load the running process list to begin.";
+    emptyRow.textContent = runningProcesses.length ? "No matching processes." : "No process data yet.";
     list.append(emptyRow);
     return;
   }
