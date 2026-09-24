@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { discoveryQuery, parseDNSPacket, RemotePairingDiscovery } from "../discovery.mjs";
+import { discoveryQuery, parseDNSPacket, parseDnsSdZoneLine, RemotePairingDiscovery } from "../discovery.mjs";
 
 function name(value) {
   const chunks = value.split(".").flatMap(label => {
@@ -88,4 +88,27 @@ test("ignores unrelated Bonjour SRV and TXT records", () => {
     { name: "Router._adisk._tcp.local", type: 33, ttl: 120, value: { port: 445, target: "router.local" } }
   ]);
   assert.deepEqual(discovery.devices(), []);
+});
+
+test("parses the macOS dns-sd zone fallback", () => {
+  const service = "29A701C5-6F4F-401C-B531-E6B8D05B5FC8._remotepairing._tcp";
+  assert.deepEqual(
+    parseDnsSdZoneLine(`${service} SRV 0 0 49152 Xarbers-iPad-Air-M2.local.`),
+    {
+      name: `${service}.local`,
+      type: 33,
+      ttl: 30,
+      value: { priority: 0, weight: 0, port: 49152, target: "Xarbers-iPad-Air-M2.local" }
+    }
+  );
+  assert.deepEqual(
+    parseDnsSdZoneLine(`${service} TXT "identifier=device-id" "authTag=abc123" "flags=0"`),
+    {
+      name: `${service}.local`,
+      type: 16,
+      ttl: 30,
+      value: { identifier: "device-id", authTag: "abc123", flags: "0" }
+    }
+  );
+  assert.equal(parseDnsSdZoneLine("_googlecast._tcp PTR unrelated"), null);
 });

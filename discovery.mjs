@@ -1,10 +1,44 @@
 import dgram from "node:dgram";
+import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 
 const MDNS_ADDRESS = "224.0.0.251";
 const MDNS_PORT = 5353;
 const SERVICE = "_remotepairing._tcp.local";
 const RECOVERY_INTERVAL = 12_000;
+
+function qualifiedServiceName(name) {
+  const value = String(name || "").replace(/\.$/, "");
+  return value.toLowerCase().endsWith(".local") ? value : `${value}.local`;
+}
+
+function unescapeDnsSdText(value) {
+  return value.replace(/\\(\d{3})/g, (_, decimal) => String.fromCharCode(Number(decimal)))
+    .replace(/\\([\\"])/g, "$1");
+}
+
+export function parseDnsSdZoneLine(line) {
+  const servicePattern = "(\\S+\\._remotepairing\\._tcp)";
+  const srv = line.match(new RegExp(`^${servicePattern}\\s+SRV\\s+\\d+\\s+\\d+\\s+(\\d+)\\s+(\\S+)`, "i"));
+  if (srv) {
+    return {
+      name: qualifiedServiceName(srv[1]),
+      type: 33,
+      ttl: 30,
+      value: { priority: 0, weight: 0, port: Number(srv[2]), target: String(srv[3]).replace(/\.$/, "") }
+    };
+  }
+  const txt = line.match(new RegExp(`^${servicePattern}\\s+TXT\\s+(.+)$`, "i"));
+  if (!txt) return null;
+  const value = {};
+  for (const match of txt[2].matchAll(/"((?:\\.|[^"])*)"/g)) {
+    const entry = unescapeDnsSdText(match[1]);
+    const separator = entry.indexOf("=");
+    if (separator >= 0) value[entry.slice(0, separator)] = entry.slice(separator + 1);
+    else if (entry) value[entry] = true;
+  }
+  return { name: qualifiedServiceName(txt[1]), type: 16, ttl: 30, value };
+}
 
 function isRemotePairingInstance(name) {
   return String(name || "").toLowerCase().endsWith(`.${SERVICE}`);
@@ -126,20 +160,28 @@ export class RemotePairingDiscovery extends EventEmitter {
     this.timer = null;
     this.expiryTimer = null;
     this.recoveryTimer = null;
+    this.systemBrowser = null;
+    this.systemBuffer = "";
+    this.running = false;
     this.instances = new Map();
     this.hostAddresses = new Map();
   }
 
   start() {
     if (this.socket) return;
+    this.running = true;
     this.openSocket();
+    this.startSystemBrowser();
     this.timer = setInterval(() => this.query(), 5_000);
     // macOS can leave the first multicast socket unable to receive packets when
     // Local Network access is granted while the app is already running. Reopen
     // it while no RemotePairing service has been found so discovery recovers
     // without requiring the user to quit and relaunch StikServer.
     this.recoveryTimer = setInterval(() => {
-      if (!this.instances.size) this.reopenSocket();
+      if (!this.instances.size) {
+        this.reopenSocket();
+        this.startSystemBrowser();
+      }
     }, RECOVERY_INTERVAL);
     this.expiryTimer = setInterval(() => this.expire(), 2_000);
   }
@@ -168,7 +210,33 @@ export class RemotePairingDiscovery extends EventEmitter {
     this.openSocket();
   }
 
+  startSystemBrowser() {
+    if (process.platform !== "darwin" || this.systemBrowser || !this.running) return;
+    const child = spawn("/usr/bin/dns-sd", ["-Z", "_remotepairing._tcp", "local."], {
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+    this.systemBrowser = child;
+    child.stdout.on("data", chunk => {
+      this.systemBuffer += chunk.toString("utf8");
+      let newline;
+      while ((newline = this.systemBuffer.indexOf("\n")) >= 0) {
+        const line = this.systemBuffer.slice(0, newline).trim();
+        this.systemBuffer = this.systemBuffer.slice(newline + 1);
+        const record = parseDnsSdZoneLine(line);
+        if (record) this.consume([record]);
+      }
+    });
+    child.once("error", error => {
+      if (this.systemBrowser === child) this.systemBrowser = null;
+      this.emit("error", error);
+    });
+    child.once("exit", () => {
+      if (this.systemBrowser === child) this.systemBrowser = null;
+    });
+  }
+
   stop() {
+    this.running = false;
     clearInterval(this.timer);
     clearInterval(this.expiryTimer);
     clearInterval(this.recoveryTimer);
@@ -177,6 +245,9 @@ export class RemotePairingDiscovery extends EventEmitter {
     this.recoveryTimer = null;
     this.socket?.close();
     this.socket = null;
+    this.systemBrowser?.kill();
+    this.systemBrowser = null;
+    this.systemBuffer = "";
     this.instances.clear();
     this.hostAddresses.clear();
   }

@@ -73,6 +73,8 @@ jobs:
           plutil -extract NSLocalNetworkUsageDescription raw "$app_path/Contents/Info.plist" | grep -q StikServer
           icon_name=$(plutil -extract CFBundleIconFile raw "$app_path/Contents/Info.plist")
           test "$icon_name" != "electron.icns"
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          codesign -dvv "$app_path" 2>&1 | grep -q 'Identifier=com.xarber.stikserver'
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
