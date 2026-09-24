@@ -413,6 +413,8 @@ function handleDeviceEvent(event) {
   } else if (event.type === "batteryHistory") {
     batterySamples = Array.isArray(event.history) ? event.history : [];
     renderBatteryHistory();
+  } else if (event.type === "batteryAnalyticsError") {
+    showStatus(event.message || "Could not read battery Analytics", false);
   } else if (event.type === "conditions") {
     renderConditions(event.groups || []);
     document.querySelector("#advanced-output").textContent = pretty(event);
@@ -612,7 +614,7 @@ function renderBatteryChart(history) {
   if (points.length < 2) {
     const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
     label.setAttribute("x", "300"); label.setAttribute("y", "92"); label.setAttribute("text-anchor", "middle"); label.setAttribute("fill", "#888693");
-    label.textContent = "Record at least two measurements to show a health trend";
+    label.textContent = "At least two Analytics samples are needed to show a health trend";
     svg.append(label); return;
   }
   const min = Math.min(70, ...points.map(point => point.health)) - 2;

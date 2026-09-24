@@ -433,7 +433,13 @@ nativeDevices.on("event", (deviceId, event) => {
   for (const viewer of viewers) {
     if (viewer.subscription === deviceId) sendJSON(viewer, { type: "deviceEvent", deviceId, event });
   }
-  if (event.type === "battery") {
+  if (event.type === "batteryAnalytics") {
+    batteryHistory.merge(deviceId, event.history).then(history => {
+      for (const viewer of viewers) {
+        if (viewer.subscription === deviceId) sendJSON(viewer, { type: "deviceEvent", deviceId, event: { type: "batteryHistory", history } });
+      }
+    }).catch(error => console.warn(`Battery Analytics history: ${error.message}`));
+  } else if (event.type === "battery") {
     batteryHistory.record(deviceId, event.data).then(history => {
       for (const viewer of viewers) {
         if (viewer.subscription === deviceId) sendJSON(viewer, { type: "deviceEvent", deviceId, event: { type: "batteryHistory", history } });

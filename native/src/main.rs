@@ -17,6 +17,7 @@ use idevice::{
         build_screen_audio_offer, build_screen_video_offer, build_start_audio_parameters,
         build_start_video_parameters,
     },
+    crashreportcopymobile::CrashReportCopyMobileClient,
     diagnostics_relay::DiagnosticsRelayClient,
     dvt::{
         condition_inducer::ConditionInducerClient,
@@ -37,11 +38,13 @@ use idevice::{
     tcp,
 };
 use mdns_sd::{ServiceDaemon, ServiceInfo};
+use regex::Regex;
 use serde::Deserialize;
 use serde_json::json;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,
+    sync::mpsc,
 };
 use uuid::Uuid;
 
@@ -298,15 +301,32 @@ async fn stream(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> 
     condition_dvt.read_message(0).await?;
     let mut conditions = ConditionInducerClient::new(&mut condition_dvt).await?;
 
+    // CrashReportCopyMobile is independent from the display and DVT channels.
+    // Keep it on a worker so downloading the complete Analytics history never
+    // stalls video, touch input, or other device commands.
+    let crash_reports =
+        CrashReportCopyMobileClient::connect_rsd(&mut handle, &mut handshake).await?;
+    let (battery_request_tx, battery_request_rx) = mpsc::channel(1);
+    let (battery_event_tx, mut battery_event_rx) = mpsc::channel(1);
+    tokio::spawn(battery_analytics_worker(
+        crash_reports,
+        battery_request_rx,
+        battery_event_tx,
+    ));
+
     let mut stdin_lines = BufReader::new(tokio::io::stdin()).lines();
     let mut output = tokio::io::stdout();
     let mut depacketizer = HevcDepacketizer::new();
     let mut orientation_interval = tokio::time::interval(Duration::from_millis(750));
     let mut interface_orientation = InterfaceOrientation::Unknown;
     write_event(&mut output, json!({ "type": "ready" })).await?;
+    let _ = battery_request_tx.try_send(());
 
     loop {
         tokio::select! {
+            Some(event) = battery_event_rx.recv() => {
+                write_event(&mut output, event).await?;
+            }
             datagram = media.video_udp.recv() => {
                 let datagram = datagram?;
                 let Some(packet) = RtpPacket::parse(&datagram.data) else { continue };
@@ -323,6 +343,20 @@ async fn stream(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> 
                 let command: ControlCommand = serde_json::from_str(&line)?;
                 if command.command == "stop" { break; }
                 let command_name = command.command.clone();
+                if command.command == "batteryAnalytics" {
+                    let event = match battery_request_tx.try_send(()) {
+                        Ok(()) => command_result("batteryAnalytics", json!({ "syncing": true })),
+                        Err(mpsc::error::TrySendError::Full(_)) => command_result("batteryAnalytics", json!({ "syncing": true })),
+                        Err(mpsc::error::TrySendError::Closed(_)) => json!({
+                            "type": "commandResult",
+                            "command": "batteryAnalytics",
+                            "ok": false,
+                            "message": "Battery Analytics reader is unavailable"
+                        }),
+                    };
+                    write_event(&mut output, event).await?;
+                    continue;
+                }
                 let result = handle_command(
                     command,
                     &mut universal_hid,
@@ -370,6 +404,160 @@ async fn stream(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> 
     let _ = media.display.stop_media_stream().await;
     drop(media.audio_udp);
     Ok(())
+}
+
+async fn battery_analytics_worker(
+    mut client: CrashReportCopyMobileClient,
+    mut requests: mpsc::Receiver<()>,
+    events: mpsc::Sender<serde_json::Value>,
+) {
+    while requests.recv().await.is_some() {
+        let event = match read_battery_analytics(&mut client).await {
+            Ok(history) => json!({ "type": "batteryAnalytics", "history": history }),
+            Err(error) => json!({ "type": "batteryAnalyticsError", "message": error.to_string() }),
+        };
+        if events.send(event).await.is_err() {
+            break;
+        }
+    }
+}
+
+async fn read_battery_analytics(
+    client: &mut CrashReportCopyMobileClient,
+) -> Result<Vec<serde_json::Value>, IdeviceError> {
+    let mut names = client.ls(None).await?;
+    names.retain(|name| {
+        let lower = name.to_ascii_lowercase();
+        lower.contains("analytics-") || lower.contains("log-aggregated-")
+    });
+    names.sort();
+
+    let mut history = Vec::new();
+    for source_name in names {
+        let Ok(bytes) = client.pull(&source_name).await else {
+            continue;
+        };
+        let text = String::from_utf8_lossy(&bytes);
+        if let Some(sample) = battery_analytics_sample(&text, &source_name) {
+            history.push(sample);
+        }
+    }
+    Ok(history)
+}
+
+fn battery_analytics_sample(text: &str, source_name: &str) -> Option<serde_json::Value> {
+    let cycles = analytics_number(
+        text,
+        &["CycleCount", "last_value_CycleCount", "cycle_count"],
+    );
+    let full_capacity = analytics_number(
+        text,
+        &[
+            "NominalChargeCapacity",
+            "last_value_NominalChargeCapacity",
+            "AppleRawMaxCapacity",
+            "last_value_AppleRawMaxCapacity",
+            "raw_max_capacity",
+            "AvailableMax",
+        ],
+    );
+    let design_capacity = analytics_number(
+        text,
+        &[
+            "MaximumFCC",
+            "last_value_MaximumFCC",
+            "DesignCapacity",
+            "last_value_DesignCapacity",
+            "OriginalMax",
+        ],
+    );
+    let reported_health = analytics_number(
+        text,
+        &[
+            "MaximumCapacityPercent",
+            "last_value_MaximumCapacityPercent",
+            "maximumCapacity",
+        ],
+    )
+    .filter(|value| (0.0..=110.0).contains(value));
+    let health = reported_health.or_else(|| match (full_capacity, design_capacity) {
+        (Some(full), Some(design)) if design > 0.0 => Some(full / design * 100.0),
+        _ => None,
+    });
+    let temperature = normalize_temperature(analytics_number(
+        text,
+        &[
+            "AverageTemperature",
+            "last_value_AverageTemperature",
+            "averageTemperature",
+        ],
+    ));
+
+    if health.is_none() && cycles.is_none() && full_capacity.is_none() {
+        return None;
+    }
+    Some(json!({
+        "date": analytics_date(text, source_name),
+        "health": health,
+        "cycles": cycles.map(|value| value.round() as i64),
+        "temperature": temperature,
+        "fullCapacity": full_capacity.map(|value| value.round() as i64),
+        "designCapacity": design_capacity.map(|value| value.round() as i64),
+        "sourceName": source_name,
+    }))
+}
+
+fn analytics_number(text: &str, keys: &[&str]) -> Option<f64> {
+    for key in keys {
+        let escaped = regex::escape(key);
+        let patterns = [
+            format!(r#""{escaped}"\s*:\s*(-?\d+(?:\.\d+)?)"#),
+            format!(
+                r#"<key>{escaped}</key>\s*<(?:integer|real)>(-?\d+(?:\.\d+)?)</(?:integer|real)>"#
+            ),
+            format!(
+                r#"(?s)"(?:name|key)"\s*:\s*"{escaped}".{{0,180}}?"(?:value|last_value)"\s*:\s*(-?\d+(?:\.\d+)?)"#
+            ),
+        ];
+        for pattern in patterns {
+            let Ok(regex) = Regex::new(&pattern) else {
+                continue;
+            };
+            let Some(captures) = regex.captures(text) else {
+                continue;
+            };
+            if let Some(value) = captures
+                .get(1)
+                .and_then(|capture| capture.as_str().parse().ok())
+            {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
+fn analytics_date(text: &str, source_name: &str) -> String {
+    let prefix: String = text.chars().take(2_000).collect();
+    let combined = format!("{source_name}\n{prefix}");
+    Regex::new(r"20\d{2}-\d{2}-\d{2}")
+        .ok()
+        .and_then(|regex| regex.find(&combined))
+        .map(|value| format!("{}T00:00:00Z", value.as_str()))
+        .unwrap_or_default()
+}
+
+fn normalize_temperature(value: Option<f64>) -> Option<f64> {
+    let value = value?;
+    if (200.0..=400.0).contains(&value) {
+        Some(value - 273.15)
+    } else if (1_000.0..=5_000.0).contains(&value) {
+        Some(value / 100.0)
+    } else if (-30.0..=100.0).contains(&value) {
+        Some(value)
+    } else {
+        None
+    }
 }
 
 async fn start_screen_media_session(
