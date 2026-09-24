@@ -286,9 +286,8 @@ class WebSocketPeer {
       nativeDevices.startPairing(direct).catch(error => sendJSON(this, { type: "error", message: error.message }));
       return;
     }
-    if (message.type === "pairPin") {
-      try { nativeDevices.submitPairingPin(String(message.deviceId || ""), String(message.pin || "")); }
-      catch (error) { sendJSON(this, { type: "error", message: error.message }); }
+    if (message.type === "pairCancel") {
+      nativeDevices.cancelPairing(String(message.deviceId || ""));
       return;
     }
     if (message.type === "batteryHistory") {

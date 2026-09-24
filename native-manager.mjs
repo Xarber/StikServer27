@@ -251,18 +251,14 @@ export class NativeDeviceManager extends EventEmitter {
     if (!this.binaryAvailable) throw new Error("Build the native CoreDevice backend before pairing");
     const existing = this.pairingSessions.get(device.id);
     if (existing) return;
-    const address = preferredAddress(device);
-    if (!address) throw new Error("The discovered device has no reachable address");
     const output = this.pairingPath(device);
     const child = spawn(this.binary, [
       "pair",
-      "--host", address,
-      "--port", String(device.port),
       "--output", output
     ], { stdio: ["pipe", "pipe", "pipe"] });
     const pairing = { child, output, stdout: "", stderr: "" };
     this.pairingSessions.set(device.id, pairing);
-    this.emit("pairing", device.id, { state: "connecting" });
+    this.emit("pairing", device.id, { state: "starting" });
     child.stdout.on("data", chunk => {
       pairing.stdout += chunk.toString("utf8");
       let newline;
@@ -272,30 +268,28 @@ export class NativeDeviceManager extends EventEmitter {
         if (!line) continue;
         try {
           const event = JSON.parse(line);
+          if (event.type === "advertising") this.emit("pairing", device.id, { state: "advertising" });
+          if (event.type === "pin") this.emit("pairing", device.id, { state: "showPin", pin: event.pin });
           if (event.type === "paired") this.emit("pairing", device.id, { state: "paired" });
         } catch { this.emit("log", device.id, `pairing: ${line}`); }
       }
     });
     child.stderr.on("data", chunk => {
       pairing.stderr += chunk.toString("utf8");
-      if (pairing.stderr.includes("PIN_REQUIRED")) {
-        pairing.stderr = pairing.stderr.replace("PIN_REQUIRED", "");
-        this.emit("pairing", device.id, { state: "pinRequired" });
-      }
     });
     child.once("error", error => this.finishPairing(device.id, error));
     child.once("exit", code => {
       if (code === 0) this.finishPairing(device.id, null);
-      else this.finishPairing(device.id, new Error(`Pairing process exited with code ${code}`));
+      else this.finishPairing(device.id, new Error(pairing.stderr.trim() || `Pairing process exited with code ${code}`));
     });
   }
 
-  submitPairingPin(deviceId, pin) {
+  cancelPairing(deviceId) {
     const pairing = this.pairingSessions.get(deviceId);
-    if (!pairing || pairing.child.stdin.destroyed) throw new Error("No pairing request is waiting for a PIN");
-    if (!/^\d{4,8}$/.test(pin)) throw new Error("Enter the numeric PIN shown by the device");
-    pairing.child.stdin.write(`${pin}\n`);
-    this.emit("pairing", deviceId, { state: "verifying" });
+    if (!pairing) return;
+    this.pairingSessions.delete(deviceId);
+    pairing.child.kill("SIGTERM");
+    this.emit("pairing", deviceId, { state: "cancelled" });
   }
 
   finishPairing(deviceId, error) {

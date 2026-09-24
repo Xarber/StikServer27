@@ -1,4 +1,11 @@
-use std::{env, net::IpAddr, path::PathBuf, process::ExitCode, time::Duration};
+use std::{
+    env,
+    io::Write,
+    net::{IpAddr, Ipv4Addr},
+    path::PathBuf,
+    process::ExitCode,
+    time::Duration,
+};
 
 use idevice::{
     IdeviceError, ReadWrite, RsdService,
@@ -22,13 +29,14 @@ use idevice::{
         sysmontap::{SysmontapClient, SysmontapConfig},
     },
     remote_pairing::{
-        PeerDevice, RemotePairingClient, RpPairingFile, RpPairingSocket,
-        connect_tls_psk_tunnel_native,
+        PAIRABLE_HOST_SERVICE_TYPE, PairableHost, PairableHostInfo, PeerDevice,
+        RemotePairingClient, RpPairingFile, RpPairingSocket, connect_tls_psk_tunnel_native,
     },
     rsd::RsdHandshake,
     springboardservices::{InterfaceOrientation, SpringBoardServicesClient},
     tcp,
 };
+use mdns_sd::{ServiceDaemon, ServiceInfo};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::{
@@ -137,23 +145,52 @@ fn parse_arguments() -> Result<Arguments, Box<dyn std::error::Error>> {
 }
 
 async fn pair(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> {
-    require_endpoint(&arguments)?;
     let output = arguments.output.ok_or("pair requires --output")?;
-    let stream = connect_endpoint(&arguments.host, arguments.port).await?;
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).await?;
+    let port = listener.local_addr()?.port();
     let host_label = "StikServer";
     let mut pairing = RpPairingFile::generate(host_label);
-    let mut client = RemotePairingClient::new(RpPairingSocket::new(stream), host_label);
-    client
-        .connect(&mut pairing, async || {
-            eprintln!("PIN_REQUIRED");
-            let mut line = String::new();
-            let _ = std::io::stdin().read_line(&mut line);
-            line.trim().to_string()
-        })
-        .await?;
+    let host_info = PairableHostInfo::generate(host_label, "Mac17,7");
+    let service_identifier = pairing.identifier.clone();
+    let txt = host_info.mdns_txt_records(&service_identifier);
+    let properties: Vec<(&str, &str)> = txt
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect();
+    let mdns = ServiceDaemon::new()?;
+    let _ = mdns.set_service_name_len_max(80);
+    let hostname = format!("stikserver-{}.local.", &service_identifier[..8]);
+    let service = ServiceInfo::new(
+        PAIRABLE_HOST_SERVICE_TYPE,
+        &service_identifier,
+        &hostname,
+        "",
+        port,
+        &properties[..],
+    )?
+    .enable_addr_auto();
+    mdns.register(service)?;
+    print_json_line(json!({ "type": "advertising" }))?;
+
+    let (stream, _) = listener.accept().await?;
+    let socket = RpPairingSocket::new_device(stream);
+    let mut host = PairableHost::new(socket, host_info);
+    host.accept(&mut pairing, |pin| async move {
+        let _ = print_json_line(json!({ "type": "pin", "pin": pin }));
+    })
+    .await?;
     pairing.write_to_file(&output).await?;
-    println!("{}", json!({ "type": "paired", "path": output }));
+    if let Ok(receiver) = mdns.shutdown() {
+        let _ = tokio::task::spawn_blocking(move || receiver.recv_timeout(Duration::from_secs(2)))
+            .await;
+    }
+    print_json_line(json!({ "type": "paired", "path": output }))?;
     Ok(())
+}
+
+fn print_json_line(value: serde_json::Value) -> Result<(), std::io::Error> {
+    println!("{value}");
+    std::io::stdout().flush()
 }
 
 async fn match_pairing(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> {
@@ -280,7 +317,7 @@ async fn stream(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> 
                 if let Some(client) = springboard.as_mut()
                     && let Ok(value) = client.get_interface_orientation().await
                 {
-                    interface_orientation = value;
+                    interface_orientation = presentation_orientation(value);
                     write_event(&mut output, json!({
                         "type": "orientation",
                         "orientation": orientation_name(&interface_orientation)
@@ -855,6 +892,16 @@ fn orientation_name(value: &InterfaceOrientation) -> &'static str {
         InterfaceOrientation::LandscapeRight => "landscapeRight",
         InterfaceOrientation::LandscapeLeft => "landscapeLeft",
         InterfaceOrientation::Unknown => "unknown",
+    }
+}
+
+// CoreDevice's landscape labels describe the physical rotation direction.
+// SpringBoard presentation (and StikDebug) uses the opposite left/right label.
+fn presentation_orientation(value: InterfaceOrientation) -> InterfaceOrientation {
+    match value {
+        InterfaceOrientation::LandscapeRight => InterfaceOrientation::LandscapeLeft,
+        InterfaceOrientation::LandscapeLeft => InterfaceOrientation::LandscapeRight,
+        other => other,
     }
 }
 

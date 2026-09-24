@@ -7,6 +7,10 @@ const shell = document.querySelector("#screen-shell");
 const pairButton = document.querySelector("#pair");
 const importPairingButton = document.querySelector("#import-pairing");
 const pairingFileInput = document.querySelector("#pairing-file");
+const pairingDialog = document.querySelector("#pairing-dialog");
+const pairingStatus = document.querySelector("#pairing-status");
+const pairingPin = document.querySelector("#pairing-pin");
+const pairingPinHelp = document.querySelector("#pairing-pin-help");
 const token = new URLSearchParams(location.search).get("token") || localStorage.getItem("stikserver-token") || "";
 if (token) localStorage.setItem("stikserver-token", token);
 
@@ -313,7 +317,22 @@ function installFloatingControls() {
 }
 
 pairButton.addEventListener("click", () => {
-  if (selectedDevice) send({ type: "pair", deviceId: selectedDevice });
+  if (!selectedDevice) return;
+  pairingStatus.textContent = "Starting pairing…";
+  pairingPin.hidden = true;
+  pairingPinHelp.hidden = true;
+  pairingDialog.showModal();
+  send({ type: "pair", deviceId: selectedDevice });
+});
+
+document.querySelector("#cancel-pairing").addEventListener("click", () => {
+  if (selectedDevice) send({ type: "pairCancel", deviceId: selectedDevice });
+  pairingDialog.close();
+});
+pairingDialog.addEventListener("cancel", event => {
+  event.preventDefault();
+  if (selectedDevice) send({ type: "pairCancel", deviceId: selectedDevice });
+  pairingDialog.close();
 });
 
 importPairingButton.addEventListener("click", () => pairingFileInput.click());
@@ -343,13 +362,25 @@ pairingFileInput.addEventListener("change", async () => {
 function handlePairing(message) {
   if (message.deviceId !== selectedDevice) return;
   const pairing = message.pairing;
-  if (pairing.state === "pinRequired") {
-    const pin = window.prompt("Enter the PIN shown on the iPhone or iPad:");
-    if (pin) send({ type: "pairPin", deviceId: selectedDevice, pin: pin.trim() });
+  if (pairing.state === "advertising") {
+    pairingStatus.textContent = "Waiting for the device to choose StikServer…";
+  } else if (pairing.state === "showPin") {
+    pairingStatus.textContent = "StikServer is ready to pair.";
+    pairingPin.value = pairing.pin;
+    pairingPin.textContent = pairing.pin;
+    pairingPin.hidden = false;
+    pairingPinHelp.hidden = false;
   } else if (pairing.state === "failed") {
+    pairingStatus.textContent = pairing.message || "Pairing failed";
     showStatus(pairing.message || "Pairing failed", false);
+  } else if (pairing.state === "ready") {
+    pairingStatus.textContent = "Paired successfully.";
+    showStatus("Device paired", true);
+    setTimeout(() => pairingDialog.open && pairingDialog.close(), 900);
+  } else if (pairing.state === "cancelled") {
+    if (pairingDialog.open) pairingDialog.close();
   } else {
-    showStatus(`Pairing: ${pairing.state}`, pairing.state === "ready");
+    pairingStatus.textContent = `Pairing: ${pairing.state}`;
   }
 }
 

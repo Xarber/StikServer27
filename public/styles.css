@@ -136,6 +136,12 @@ legend { padding: 0 5px; color: #cbc9d3; font-weight: 700; }
   .fullscreen-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+.pairing-dialog { max-width: min(420px, calc(100vw - 32px)); padding: 0; border: 1px solid rgba(255,255,255,.16); border-radius: 22px; color: var(--primary); background: rgba(25,25,31,.98); box-shadow: 0 24px 80px rgba(0,0,0,.6); }
+.pairing-dialog::backdrop { background: rgba(0,0,0,.58); backdrop-filter: blur(8px); }
+.pairing-dialog form { display: grid; gap: 14px; padding: 24px; }
+.pairing-dialog h2, .pairing-dialog p { margin: 0; }
+.pairing-pin { display: block; padding: 16px; border-radius: 14px; background: rgba(255,255,255,.08); font: 700 2rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .15em; text-align: center; }
+
 @media (orientation: landscape) and (max-height: 600px) {
   main { padding-top: 8px; }
   header { margin-bottom: 8px; }

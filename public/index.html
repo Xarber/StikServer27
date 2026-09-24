@@ -179,6 +179,16 @@
         </section>
       </section>
     </main>
+    <dialog id="pairing-dialog" class="pairing-dialog">
+      <form method="dialog">
+        <h2>Pair a Device</h2>
+        <p>On the iPhone or iPad, open <strong>Settings → Privacy &amp; Security → Developer Mode → Other Devices</strong>, then choose <strong>StikServer</strong>.</p>
+        <p id="pairing-status" class="muted">Starting pairing…</p>
+        <output id="pairing-pin" class="pairing-pin" hidden></output>
+        <p id="pairing-pin-help" hidden>Enter this code on the device.</p>
+        <button id="cancel-pairing" type="button">Cancel</button>
+      </form>
+    </dialog>
     <script type="module" src="/app.js"></script>
   </body>
 </html>
