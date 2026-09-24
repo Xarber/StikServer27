@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron";
 import ffmpegStatic from "ffmpeg-static";
+import { privateAddresses } from "./network-address.mjs";
 
 const desktopRoot = dirname(fileURLToPath(import.meta.url));
 const projectRoot = dirname(desktopRoot);
@@ -75,7 +76,7 @@ async function startDesktop() {
 }
 
 ipcMain.handle("stikserver:copy-remote-link", () => {
-  const address = privateAddresses()[0];
+  const address = privateAddresses(networkInterfaces())[0];
   if (!address) return { url: null };
   const token = process.env.STIKSERVER_TOKEN;
   const url = `http://${address}:${process.env.STIKSERVER_PORT}/?token=${encodeURIComponent(token)}`;
@@ -105,22 +106,4 @@ async function persistentToken(path) {
 
 function unpackedPath(path) {
   return path?.replace("app.asar", "app.asar.unpacked");
-}
-
-function privateAddresses() {
-  const addresses = [];
-  for (const interfaces of Object.values(networkInterfaces())) {
-    for (const address of interfaces || []) {
-      if (address.family !== "IPv4" || address.internal) continue;
-      addresses.push(address.address);
-    }
-  }
-  return addresses.sort((left, right) => addressPriority(left) - addressPriority(right));
-}
-
-function addressPriority(address) {
-  if (address.startsWith("192.168.") || address.startsWith("10.")) return 0;
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(address)) return 0;
-  if (address.startsWith("100.")) return 1;
-  return 2;
 }
