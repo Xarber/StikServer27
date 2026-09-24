@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FramedRecordParser, JpegParser, isPairingPlist, preferredAddress, videoDecoderArguments } from "../native-manager.mjs";
+import { FramedRecordParser, JpegParser, isPairingPlist, pairingExportFilename, preferredAddress, videoDecoderArguments } from "../native-manager.mjs";
 
 test("parses split native records", () => {
   const records = [];
@@ -46,6 +46,13 @@ test("recognizes bounded XML and binary pairing plists", () => {
   assert.equal(isPairingPlist(binary), true);
   assert.equal(isPairingPlist(Buffer.from("not a pairing identity")), false);
   assert.equal(isPairingPlist(Buffer.alloc(1024 * 1024 + 1)), false);
+});
+
+test("names exported pairing identities after the device and model", () => {
+  assert.equal(
+    pairingExportFilename({ name: "Xarber's iPad Air M4", modelIdentifier: "iPad14,3" }),
+    "xarbers-ipad-air-m4.ipad14,3.plist"
+  );
 });
 
 test("leaves display orientation to the live SpringBoard transform", () => {

@@ -39,12 +39,19 @@ function authorized(requestURL) {
 }
 
 function deviceList() {
-  const relayed = [...agents.values()].map(({ metadata }) => metadata);
-  const activeServiceIdentifiers = new Set(relayed.map(device => device.serviceIdentifier).filter(Boolean));
-  return [
-    ...relayed,
-    ...directDevices.filter(device => !activeServiceIdentifiers.has(device.serviceIdentifier))
-  ];
+  const key = device => device.serviceIdentifier || device.pairingIdentifier || device.id;
+  const routes = new Map(directDevices.map(device => [key(device), device]));
+  for (const { metadata } of agents.values()) {
+    const routeKey = key(metadata);
+    const current = routes.get(routeKey);
+    // Prefer StikServer's own paired LAN connection (zero relay hops). If its
+    // direct discovery is not paired, use the shortest ready StikDebug route.
+    if (current?.mode === "direct" && current.controllable) continue;
+    if (!current || !current.controllable || Number(metadata.routeHops || 1) < Number(current.routeHops || Infinity)) {
+      routes.set(routeKey, metadata);
+    }
+  }
+  return [...routes.values()];
 }
 
 function sendJSON(peer, value) {
@@ -209,6 +216,11 @@ class WebSocketPeer {
         id,
         name: String(message.device.name || "iOS Device"),
         kind: String(message.device.kind || "iPhone"),
+        modelIdentifier: String(message.device.modelIdentifier || ""),
+        serviceIdentifier: String(message.device.serviceIdentifier || "") || null,
+        pairingIdentifier: String(message.device.pairingIdentifier || "") || null,
+        paired: message.device.paired !== false,
+        routeHops: Math.max(1, Number(message.device.routeHops || 1)),
         width: Number(message.device.width || 0),
         height: Number(message.device.height || 0),
         connected: true,
@@ -218,6 +230,31 @@ class WebSocketPeer {
       agents.set(id, { peer: this, metadata });
       sendJSON(this, { type: "registered", deviceId: id });
       publishDevices();
+      return;
+    }
+    if (message.type === "deviceEvent" && this.deviceId) {
+      for (const viewer of viewers) {
+        if (viewer.subscription === this.deviceId || viewer.commandDevices.has(this.deviceId)) {
+          sendJSON(viewer, { ...message, deviceId: this.deviceId });
+        }
+      }
+      if (message.event?.type === "batteryAnalytics" && Array.isArray(message.event.history)) {
+        batteryHistory.merge(this.deviceId, message.event.history).then(history => {
+          for (const viewer of viewers) {
+            if (viewer.subscription === this.deviceId || viewer.commandDevices.has(this.deviceId)) {
+              sendJSON(viewer, { type: "deviceEvent", deviceId: this.deviceId, event: { type: "batteryHistory", history } });
+            }
+          }
+        }).catch(error => console.warn(`Relayed battery history: ${error.message}`));
+      }
+      return;
+    }
+    if (message.type === "relayError" && this.deviceId) {
+      for (const viewer of viewers) {
+        if (viewer.subscription === this.deviceId || viewer.commandDevices.has(this.deviceId)) {
+          sendJSON(viewer, { type: "error", deviceId: this.deviceId, command: message.command, message: message.message || "Relayed command failed" });
+        }
+      }
       return;
     }
     if (message.type === "metadata" && this.deviceId) {
@@ -236,15 +273,16 @@ class WebSocketPeer {
       const id = String(message.deviceId || "");
       if (agents.has(id)) {
         this.subscription = id;
+        sendJSON(agents.get(id).peer, { type: "subscribe", deviceId: id });
         sendJSON(this, { type: "subscribed", deviceId: id });
-        stopDirectIfUnused(previousSubscription);
+        stopDeviceIfUnused(previousSubscription);
         return;
       }
       const direct = directDevices.find(device => device.id === id && device.controllable);
       if (!direct) {
         this.subscription = null;
         sendJSON(this, { type: "subscribed", deviceId: null });
-        stopDirectIfUnused(previousSubscription);
+        stopDeviceIfUnused(previousSubscription);
         return;
       }
       nativeDevices.start(direct).then(() => {
@@ -254,7 +292,7 @@ class WebSocketPeer {
         }
         this.subscription = id;
         sendJSON(this, { type: "subscribed", deviceId: id });
-        stopDirectIfUnused(previousSubscription);
+        stopDeviceIfUnused(previousSubscription);
         refreshDirectDevices();
       }).catch(error => sendJSON(this, { type: "error", message: error.message }));
       return;
@@ -264,7 +302,7 @@ class WebSocketPeer {
       const previousSubscription = this.subscription;
       this.subscription = null;
       sendJSON(this, { type: "subscribed", deviceId: null });
-      stopDirectIfUnused(previousSubscription);
+      stopDeviceIfUnused(previousSubscription);
       return;
     }
     if (message.type === "command") {
@@ -279,6 +317,7 @@ class WebSocketPeer {
           .catch(error => sendJSON(this, { type: "error", message: error.message }));
         return;
       }
+      this.commandDevices.add(id);
       sendJSON(agent, { ...message, deviceId: id });
       return;
     }
@@ -326,9 +365,24 @@ class WebSocketPeer {
     this.subscription = null;
     const commandDevices = [...this.commandDevices];
     this.commandDevices.clear();
-    stopDirectIfUnused(previousSubscription);
-    commandDevices.forEach(stopDirectIfUnused);
+    stopDeviceIfUnused(previousSubscription);
+    commandDevices.forEach(stopDeviceIfUnused);
   }
+}
+
+function stopDeviceIfUnused(deviceId) {
+  if (!deviceId) return;
+  const agent = agents.get(deviceId)?.peer;
+  if (agent) {
+    const isStreaming = [...viewers].some(viewer => !viewer.closed && viewer.subscription === deviceId);
+    if (!isStreaming) sendJSON(agent, { type: "unsubscribe", deviceId });
+    return;
+  }
+  const isUsed = [...viewers].some(viewer => !viewer.closed && (
+    viewer.subscription === deviceId || viewer.commandDevices.has(deviceId)
+  ));
+  if (isUsed) return;
+  nativeDevices.stop(deviceId);
 }
 
 function stopDirectIfUnused(deviceId) {
@@ -364,6 +418,21 @@ const server = createServer(async (request, response) => {
       await nativeDevices.importPairing(device, body);
       await refreshDirectDevices();
       return jsonResponse(response, 200, { ok: true });
+    }
+    if (pathname === "/api/pairing" && request.method === "GET") {
+      if (!authorized(requestURL)) return jsonResponse(response, 401, { ok: false, message: "Unauthorized" });
+      const id = String(requestURL.searchParams.get("deviceId") || "");
+      const device = rawDirectDevices.find(candidate => candidate.id === id);
+      if (!device) return jsonResponse(response, 404, { ok: false, message: "Only devices paired directly with StikServer can be exported" });
+      const exported = await nativeDevices.exportPairing(device);
+      response.writeHead(200, {
+        "content-type": "application/x-plist",
+        "content-disposition": `attachment; filename="${exported.filename.replace(/["\\]/g, "-")}"`,
+        "content-length": exported.bytes.length,
+        "cache-control": "no-store"
+      });
+      response.end(exported.bytes);
+      return;
     }
     if (pathname === "/") pathname = "/index.html";
     const safePath = normalize(pathname).replace(/^(\.\.(\/|\\|$))+/, "");

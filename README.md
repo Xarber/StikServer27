@@ -8,7 +8,7 @@ Download the package for macOS, Windows or Linux from the latest **Build desktop
 
 StikServer generates and stores a private access token automatically. Use **Copy remote access link** inside the desktop app to open the same controller from an Android phone, tablet or another computer. The controlled iPhone or iPad must be visible to the StikServer computer over the local network.
 
-Pair normally with the PIN shown by iOS, or import an existing XML/binary pairing plist from the device controls. Pairing identities and battery history stay in the desktop application's private data directory and are never sent back to a browser.
+Pair normally with the PIN shown by iOS, or import an existing XML/binary pairing plist from the device controls. Pairing identities stay in the desktop application's private data directory unless you explicitly choose **Export Pairing File**. Exports use a readable `device-name.model.plist` filename.
 
 ## Development
 
@@ -33,6 +33,6 @@ Connect to `/agent?token=...`, then send:
 {"type":"register","device":{"id":"stable-id","name":"My iPad","kind":"iPad","width":2048,"height":2732}}
 ```
 
-Send JPEG frames as binary WebSocket messages. Commands arrive as JSON with `type: "command"`; touch commands contain normalized `x` and `y` coordinates. Metadata can be refreshed with `type: "metadata"`.
+StikServer sends `subscribe` only while a viewer requests the screen and sends `unsubscribe` after the last viewer leaves. Send JPEG frames as binary WebSocket messages only while subscribed. Commands arrive as JSON with `type: "command"`; touch commands contain normalized `x` and `y` coordinates. Tool results return as `deviceEvent` messages. Metadata can be refreshed with `type: "metadata"`.
 
-This protocol remains available as an internal backend boundary, but the intended production path is StikServer's own native CoreDevice process—not a StikDebug app relaying another device.
+StikServer prefers its own paired zero-hop CoreDevice connection. When that route is unavailable, open StikDebug clients can automatically advertise their locally paired devices as one-hop routes; the shortest ready route wins and relayed device lists are never re-advertised, preventing loops.

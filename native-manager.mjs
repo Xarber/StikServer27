@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { access, mkdir, readdir, rename, unlink, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { basename, join } from "node:path";
 import { spawn } from "node:child_process";
@@ -155,6 +155,16 @@ export class NativeDeviceManager extends EventEmitter {
       await unlink(temporary).catch(() => {});
       throw error;
     }
+  }
+
+  async exportPairing(device) {
+    const description = await this.describe(device);
+    if (!description.paired) throw new Error("This device is not paired with StikServer");
+    const pairingFile = this.pairingPath(device);
+    return {
+      bytes: await readFile(pairingFile),
+      filename: pairingExportFilename(description)
+    };
   }
 
   async findMatchingPairing(device) {
@@ -345,6 +355,20 @@ export class NativeDeviceManager extends EventEmitter {
     this.emit("error", error);
     this.stop(session.device.id, false);
   }
+}
+
+export function pairingExportFilename(device) {
+  const slug = String(device.name || "ios-device")
+    .normalize("NFKD")
+    .replace(/[’']/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "ios-device";
+  const model = String(device.modelIdentifier || device.model || device.kind || "ios")
+    .toLowerCase()
+    .replace(/[^a-z0-9,._-]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "ios";
+  return `${slug}.${model}.plist`;
 }
 
 function pairingCandidates(device) {

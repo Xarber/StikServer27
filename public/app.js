@@ -6,6 +6,7 @@ const placeholder = document.querySelector("#placeholder");
 const shell = document.querySelector("#screen-shell");
 const pairButton = document.querySelector("#pair");
 const importPairingButton = document.querySelector("#import-pairing");
+const exportPairingButton = document.querySelector("#export-pairing");
 const pairingFileInput = document.querySelector("#pairing-file");
 const pairingDialog = document.querySelector("#pairing-dialog");
 const pairingStatus = document.querySelector("#pairing-status");
@@ -124,6 +125,7 @@ function selectDevice(id) {
   placeholder.hidden = false;
   pairButton.hidden = !device || device.mode !== "direct" || device.paired;
   importPairingButton.hidden = !device || device.mode !== "direct" || device.paired;
+  exportPairingButton.hidden = !device || device.mode !== "direct" || !device.paired;
   if (device && !device.controllable) {
     placeholder.hidden = false;
     placeholder.querySelector("span").textContent = device.backendMessage || "Pair this device to control it";
@@ -370,6 +372,14 @@ pairingDialog.addEventListener("cancel", event => {
 });
 
 importPairingButton.addEventListener("click", () => pairingFileInput.click());
+exportPairingButton.addEventListener("click", () => {
+  if (!selectedDevice) return;
+  const query = new URLSearchParams({ deviceId: selectedDevice });
+  if (token) query.set("token", token);
+  const link = document.createElement("a");
+  link.href = `/api/pairing?${query}`;
+  link.click();
+});
 pairingFileInput.addEventListener("change", async () => {
   const file = pairingFileInput.files?.[0];
   const deviceId = selectedDevice;
