@@ -36,6 +36,7 @@ test("prefers a directly reachable Bonjour address", () => {
     addresses: ["fe80::1234%en0"]
   }), "fe80::1234%en0");
   assert.equal(preferredAddress({ host: "ipad.local", addresses: ["fe80::1234"] }), "ipad.local");
+  assert.equal(preferredAddress({ name: "Xarber's iPad Air M2", addresses: [] }), "Xarbers-iPad-Air-M2.local");
 });
 
 test("recognizes bounded XML and binary pairing plists", () => {

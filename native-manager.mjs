@@ -221,9 +221,12 @@ export class NativeDeviceManager extends EventEmitter {
     const session = { device, native, decoder, stopped: false, orientation: "unknown" };
     this.sessions.set(device.id, session);
 
+    native.stdin.on("error", error => this.handleInputError(session, error));
+    decoder.stdin.on("error", error => this.handleInputError(session, error));
+
     const records = new FramedRecordParser((type, payload) => {
       if (type === 1) {
-        if (!decoder.stdin.destroyed) decoder.stdin.write(payload);
+        writeToChild(decoder, payload, error => this.handleInputError(session, error));
       } else if (type === 2) {
         try {
           const event = JSON.parse(payload.toString("utf8"));
@@ -305,15 +308,17 @@ export class NativeDeviceManager extends EventEmitter {
 
   send(deviceId, command) {
     const session = this.sessions.get(deviceId);
-    if (!session || session.stopped || session.native.stdin.destroyed) throw new Error("Device session is not active");
-    session.native.stdin.write(`${JSON.stringify(command)}\n`);
+    if (!session || session.stopped) throw new Error("Device session is not active");
+    if (!writeToChild(session.native, `${JSON.stringify(command)}\n`, error => this.handleInputError(session, error))) {
+      throw new Error("Device session is not active");
+    }
   }
 
-  stop(deviceId) {
+  stop(deviceId, notifyBackend = true) {
     const session = this.sessions.get(deviceId);
     if (!session || session.stopped) return;
     session.stopped = true;
-    if (!session.native.stdin.destroyed) session.native.stdin.write('{"command":"stop"}\n');
+    if (notifyBackend) writeToChild(session.native, '{"command":"stop"}\n');
     session.native.kill("SIGTERM");
     session.decoder.kill("SIGTERM");
     this.sessions.delete(deviceId);
@@ -330,7 +335,15 @@ export class NativeDeviceManager extends EventEmitter {
     const session = this.sessions.get(deviceId);
     if (!session || session.stopped) return;
     this.emit("log", deviceId, message);
-    this.stop(deviceId);
+    // The process has already closed its pipe. Do not write a final stop command,
+    // because Node reports that late write as an uncaught EPIPE in packaged apps.
+    this.stop(deviceId, false);
+  }
+
+  handleInputError(session, error) {
+    if (session.stopped || error?.code === "EPIPE" || error?.code === "ERR_STREAM_DESTROYED") return;
+    this.emit("error", error);
+    this.stop(session.device.id, false);
   }
 }
 
@@ -364,12 +377,33 @@ function commandAvailable(command) {
 }
 
 export function preferredAddress(device) {
-  const addresses = device.addresses || [];
+  const addresses = (device.addresses || []).map(address => String(address).trim()).filter(Boolean);
+  const advertisedHost = String(device.host || "").trim().replace(/\.$/, "");
+  const inferredBonjourHost = String(device.name || "").trim()
+    .replace(/[’']/g, "")
+    .replace(/[^\p{L}\p{N}._-]+/gu, "-")
+    .replace(/^-+|-+$/g, "");
   // Raw link-local IPv6 addresses require an interface scope (for example %en0).
   // Bonjour's IPv4 answer is therefore the safest direct endpoint. A scoped IPv6
   // address or the resolvable .local host remain valid fallbacks.
   return addresses.find(address => !address.includes(":"))
     || addresses.find(address => address.includes("%"))
-    || device.host
-    || addresses[0];
+    || advertisedHost
+    || addresses[0]
+    || (inferredBonjourHost ? `${inferredBonjourHost}.local` : undefined);
+}
+
+function writeToChild(child, payload, onError = () => {}) {
+  const input = child?.stdin;
+  if (!input || input.destroyed || input.writableEnded || !input.writable
+      || child.exitCode !== null || child.signalCode !== null) return false;
+  try {
+    input.write(payload, error => {
+      if (error) onError(error);
+    });
+    return true;
+  } catch (error) {
+    onError(error);
+    return false;
+  }
 }
