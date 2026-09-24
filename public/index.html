@@ -95,8 +95,12 @@
           </div>
 
           <div id="desktop-actions" class="desktop-actions" hidden>
-            <span>StikServer is running on this computer.</span>
-            <button id="copy-remote-link" type="button">Copy remote access link</button>
+            <span id="remote-link-description">StikServer is running on this computer.</span>
+            <div class="remote-link-actions">
+              <button id="copy-lan-link" type="button" hidden>Copy local link</button>
+              <button id="copy-both-links" type="button" hidden>Copy both</button>
+              <button id="copy-remote-link" type="button">Copy remote access link</button>
+            </div>
           </div>
           </div>
 

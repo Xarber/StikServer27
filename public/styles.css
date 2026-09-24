@@ -70,6 +70,7 @@ h1 { margin: 2px 0 0; font-size: clamp(1.65rem, 4vw, 2.15rem); letter-spacing: -
 .desktop-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 10px 12px; border: 1px solid rgba(125,115,255,.25); border-radius: 14px; background: rgba(100,85,238,.1); color: #c9c6dc; font-size: .84rem; }
 .desktop-actions[hidden] { display: none; }
 .desktop-actions button { min-height: 38px; padding: 7px 12px; border: 1px solid rgba(255,255,255,.14); border-radius: 11px; background: rgba(255,255,255,.09); color: #fff; }
+.remote-link-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
 .more-controls { grid-column: 1 / -1; border: 0; border-radius: 12px; background: rgba(255,255,255,.04); }
 .more-controls summary { padding: 13px 14px; cursor: pointer; color: #d8d7df; }
 .more-controls > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; padding: 0 8px 8px; }
@@ -139,6 +140,8 @@ legend { padding: 0 5px; color: #cbc9d3; font-weight: 700; }
   .field-grid { grid-template-columns: 1fr; }
   .process-row { grid-template-columns: 52px minmax(0,1fr) auto; }
   .desktop-actions { align-items: stretch; flex-direction: column; }
+  .remote-link-actions { justify-content: stretch; }
+  .remote-link-actions button { flex: 1 1 auto; }
   .hardware-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .fullscreen-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

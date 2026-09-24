@@ -407,11 +407,41 @@ function showStatus(message, online) {
 }
 
 if (window.stikDesktop) {
-  document.querySelector("#desktop-actions").hidden = false;
-  document.querySelector("#copy-remote-link").addEventListener("click", async () => {
-    const result = await window.stikDesktop.copyRemoteLink();
-    showStatus(result?.url ? `Copied ${result.url}` : "No private-network address is available", Boolean(result?.url));
-  });
+  configureRemoteLinkActions();
+}
+
+async function configureRemoteLinkActions() {
+  const container = document.querySelector("#desktop-actions");
+  const description = document.querySelector("#remote-link-description");
+  const preferredButton = document.querySelector("#copy-remote-link");
+  const lanButton = document.querySelector("#copy-lan-link");
+  const bothButton = document.querySelector("#copy-both-links");
+  container.hidden = false;
+
+  let links;
+  try { links = await window.stikDesktop.remoteLinks(); } catch {}
+  if (!links?.preferred) {
+    preferredButton.hidden = false;
+    preferredButton.addEventListener("click", () => copyRemoteLink("preferred"));
+    return;
+  }
+
+  preferredButton.hidden = false;
+  preferredButton.textContent = links.tailscale ? "Copy Tailscale link" : "Copy local link";
+  lanButton.hidden = !(links.tailscale && links.lan);
+  bothButton.hidden = !(links.tailscale && links.lan);
+  description.textContent = links.tailscale
+    ? "Tailscale detected. Its private link is preferred for remote access."
+    : "Copy the local-network link for another device on this network.";
+  preferredButton.addEventListener("click", () => copyRemoteLink("preferred"));
+  lanButton.addEventListener("click", () => copyRemoteLink("lan"));
+  bothButton.addEventListener("click", () => copyRemoteLink("both"));
+}
+
+async function copyRemoteLink(kind) {
+  const result = await window.stikDesktop.copyRemoteLink(kind);
+  const label = result?.kind === "both" ? "both access links" : result?.kind === "tailscale" ? "Tailscale link" : "local link";
+  showStatus(result?.url ? `Copied ${label}` : "No matching private-network address is available", Boolean(result?.url));
 }
 
 function command(command, fields = {}) {

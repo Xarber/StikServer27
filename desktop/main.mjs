@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron";
 import ffmpegStatic from "ffmpeg-static";
-import { privateAddresses } from "./network-address.mjs";
+import { networkAddresses } from "./network-address.mjs";
 
 const desktopRoot = dirname(fileURLToPath(import.meta.url));
 const projectRoot = dirname(desktopRoot);
@@ -75,13 +75,24 @@ async function startDesktop() {
   await mainWindow.loadURL(`http://127.0.0.1:${port}/?token=${encodeURIComponent(token)}`);
 }
 
-ipcMain.handle("stikserver:copy-remote-link", () => {
-  const address = privateAddresses(networkInterfaces())[0];
-  if (!address) return { url: null };
-  const token = process.env.STIKSERVER_TOKEN;
-  const url = `http://${address}:${process.env.STIKSERVER_PORT}/?token=${encodeURIComponent(token)}`;
+ipcMain.handle("stikserver:remote-links", () => remoteLinks());
+
+ipcMain.handle("stikserver:copy-remote-link", (_event, kind = "preferred") => {
+  const links = remoteLinks();
+  if (kind === "both" && links.tailscale && links.lan) {
+    const value = `Tailscale: ${links.tailscale.url}\nLocal network: ${links.lan.url}`;
+    clipboard.writeText(value);
+    return { url: value, kind, links };
+  }
+  const selected = kind === "lan"
+    ? links.lan
+    : kind === "tailscale"
+      ? links.tailscale
+      : links.preferred;
+  if (!selected) return { url: null, kind, links };
+  const url = selected.url;
   clipboard.writeText(url);
-  return { url };
+  return { url, kind: selected.kind, links };
 });
 
 app.on("before-quit", async event => {
@@ -106,4 +117,24 @@ async function persistentToken(path) {
 
 function unpackedPath(path) {
   return path?.replace("app.asar", "app.asar.unpacked");
+}
+
+function remoteLinks() {
+  const addresses = networkAddresses(networkInterfaces());
+  const tailscale = addresses.tailscale[0] ? remoteLink("tailscale", addresses.tailscale[0]) : null;
+  const lan = addresses.lan[0] ? remoteLink("lan", addresses.lan[0]) : null;
+  return {
+    tailscale,
+    lan,
+    preferred: tailscale ?? lan
+  };
+}
+
+function remoteLink(kind, address) {
+  const token = process.env.STIKSERVER_TOKEN;
+  return {
+    kind,
+    address,
+    url: `http://${address}:${process.env.STIKSERVER_PORT}/?token=${encodeURIComponent(token)}`
+  };
 }
