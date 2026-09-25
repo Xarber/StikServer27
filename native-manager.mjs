@@ -122,6 +122,9 @@ export class NativeDeviceManager extends EventEmitter {
       ...device,
       paired,
       controllable: paired && this.binaryAvailable && this.ffmpegAvailable,
+      capabilities: paired && this.binaryAvailable && this.ffmpegAvailable
+        ? [...new Set([...(device.capabilities || []), "sidestore.device.v1"])]
+        : (device.capabilities || []),
       connected: Boolean(session && !session.stopped),
       backendMessage: !this.binaryAvailable
         ? "Build the native CoreDevice backend"

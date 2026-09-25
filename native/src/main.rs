@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     env,
     io::Write,
     net::{IpAddr, Ipv4Addr},
@@ -7,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use idevice::{
     IdeviceError, ReadWrite, RsdService,
     core_device::{
@@ -34,8 +36,10 @@ use idevice::{
         RemotePairingClient, RpPairingFile, RpPairingSocket, connect_tls_psk_tunnel_native,
     },
     rsd::RsdHandshake,
+    services::{installation_proxy::InstallationProxyClient, misagent::MisagentClient},
     springboardservices::{InterfaceOrientation, SpringBoardServicesClient},
     tcp,
+    utils::installation,
 };
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use regex::Regex;
@@ -65,6 +69,7 @@ struct Arguments {
 #[serde(rename_all = "camelCase")]
 struct ControlCommand {
     command: String,
+    request_id: Option<String>,
     phase: Option<String>,
     x: Option<f64>,
     y: Option<f64>,
@@ -82,6 +87,19 @@ struct ControlCommand {
     filter_type: Option<String>,
     group_identifier: Option<String>,
     profile_identifier: Option<String>,
+    upload_id: Option<String>,
+    bundle_id: Option<String>,
+    identifier: Option<String>,
+    data: Option<String>,
+    size: Option<usize>,
+    offset: Option<usize>,
+}
+
+struct SideStoreUpload {
+    path: PathBuf,
+    bundle_id: String,
+    expected_size: usize,
+    received_size: usize,
 }
 
 struct MediaSession {
@@ -269,6 +287,7 @@ async fn stream(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> 
     let mut handle = adapter.to_async_handle();
     let rsd_stream = handle.connect(rsd_port).await?;
     let mut handshake = RsdHandshake::new(rsd_stream).await?;
+    let device_uuid = handshake.uuid.clone();
 
     let mut media = start_screen_media_session(&mut handle, &mut handshake).await?;
     let mut universal_hid =
@@ -332,6 +351,8 @@ async fn stream(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> 
     let mut depacketizer = HevcDepacketizer::new();
     let mut orientation_interval = tokio::time::interval(Duration::from_millis(750));
     let mut interface_orientation = InterfaceOrientation::Unknown;
+    let mut side_store_uploads: HashMap<String, SideStoreUpload> = HashMap::new();
+    let mut side_store_packages: HashMap<String, PathBuf> = HashMap::new();
     write_event(&mut output, json!({ "type": "ready" })).await?;
     if let Some(requests) = &battery_request_tx {
         let _ = requests.try_send(());
@@ -358,6 +379,7 @@ async fn stream(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> 
                 let command: ControlCommand = serde_json::from_str(&line)?;
                 if command.command == "stop" { break; }
                 let command_name = command.command.clone();
+                let request_id = command.request_id.clone();
                 if command.command == "batteryAnalytics" {
                     let event = match &battery_request_tx {
                         Some(requests) => match requests.try_send(()) {
@@ -392,17 +414,31 @@ async fn stream(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> 
                     &mut dvt,
                     &mut location,
                     &mut conditions,
+                    &mut handle,
+                    &mut handshake,
+                    &device_uuid,
+                    &mut side_store_uploads,
+                    &mut side_store_packages,
                 ).await;
                 match result {
-                    Ok(Some(event)) => write_event(&mut output, event).await?,
+                    Ok(Some(mut event)) => {
+                        if let (Some(request_id), Some(object)) = (request_id, event.as_object_mut()) {
+                            object.insert("requestId".into(), request_id.into());
+                        }
+                        write_event(&mut output, event).await?
+                    },
                     Ok(None) => {}
                     Err(error) => {
-                        write_event(&mut output, json!({
+                        let mut event = json!({
                             "type": "commandResult",
                             "command": command_name,
                             "ok": false,
                             "message": error.to_string()
-                        })).await?;
+                        });
+                        if let (Some(request_id), Some(object)) = (request_id, event.as_object_mut()) {
+                            object.insert("requestId".into(), request_id.into());
+                        }
+                        write_event(&mut output, event).await?;
                     }
                 }
             }
@@ -422,6 +458,12 @@ async fn stream(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> 
 
     if let Some(mut keyboard) = main_keyboard.take() {
         let _ = universal_hid.remove_main_keyboard(&mut keyboard).await;
+    }
+    for upload in side_store_uploads.into_values() {
+        let _ = tokio::fs::remove_file(upload.path).await;
+    }
+    for path in side_store_packages.into_values() {
+        let _ = tokio::fs::remove_file(path).await;
     }
     let _ = media.display.stop_media_stream().await;
     drop(media.audio_udp);
@@ -653,8 +695,148 @@ async fn handle_command(
     dvt: &mut RemoteServerClient<Box<dyn ReadWrite>>,
     location: &mut LocationSimulationClient<'_, Box<dyn ReadWrite>>,
     conditions: &mut ConditionInducerClient<'_, Box<dyn ReadWrite>>,
+    adapter: &mut tcp::handle::AdapterHandle,
+    handshake: &mut RsdHandshake,
+    device_uuid: &str,
+    side_store_uploads: &mut HashMap<String, SideStoreUpload>,
+    side_store_packages: &mut HashMap<String, PathBuf>,
 ) -> Result<Option<serde_json::Value>, Box<dyn std::error::Error>> {
     match command.command.as_str() {
+        "sideStoreBegin" | "sideStoreEnd" | "sideStoreReady" => {
+            return Ok(Some(side_store_result(&command.command, json!({}))));
+        }
+        "sideStoreUDID" => {
+            return Ok(Some(side_store_result(
+                "sideStoreUDID",
+                json!({ "udid": device_uuid }),
+            )));
+        }
+        "sideStoreInstallProfile" => {
+            let encoded = command
+                .data
+                .as_deref()
+                .ok_or("sideStoreInstallProfile requires data")?;
+            let profile = BASE64.decode(encoded)?;
+            let mut client = MisagentClient::connect_rsd(adapter, handshake).await?;
+            client.install(profile).await?;
+            return Ok(Some(side_store_result(
+                "sideStoreInstallProfile",
+                json!({}),
+            )));
+        }
+        "sideStoreRemoveProfile" => {
+            let identifier = command
+                .identifier
+                .as_deref()
+                .ok_or("sideStoreRemoveProfile requires identifier")?;
+            let mut client = MisagentClient::connect_rsd(adapter, handshake).await?;
+            client.remove(identifier).await?;
+            return Ok(Some(side_store_result("sideStoreRemoveProfile", json!({}))));
+        }
+        "sideStoreRemoveApp" => {
+            let bundle_id = command
+                .bundle_id
+                .as_deref()
+                .ok_or("sideStoreRemoveApp requires bundleId")?;
+            let mut client = InstallationProxyClient::connect_rsd(adapter, handshake).await?;
+            client.uninstall(bundle_id, None).await?;
+            return Ok(Some(side_store_result("sideStoreRemoveApp", json!({}))));
+        }
+        "sideStoreUploadBegin" => {
+            let upload_id = command
+                .upload_id
+                .as_deref()
+                .ok_or("sideStoreUploadBegin requires uploadId")?;
+            let bundle_id = command
+                .bundle_id
+                .clone()
+                .ok_or("sideStoreUploadBegin requires bundleId")?;
+            let expected_size = command.size.ok_or("sideStoreUploadBegin requires size")?;
+            if expected_size == 0 || expected_size > 4 * 1024 * 1024 * 1024usize {
+                return Err("SideStore upload size is invalid".into());
+            }
+            if let Some(previous) = side_store_uploads.remove(upload_id) {
+                let _ = tokio::fs::remove_file(previous.path).await;
+            }
+            let path = env::temp_dir().join(format!("stikserver-{}.ipa", Uuid::new_v4()));
+            tokio::fs::File::create(&path).await?;
+            side_store_uploads.insert(
+                upload_id.to_string(),
+                SideStoreUpload {
+                    path,
+                    bundle_id,
+                    expected_size,
+                    received_size: 0,
+                },
+            );
+            return Ok(Some(side_store_result("sideStoreUploadBegin", json!({}))));
+        }
+        "sideStoreUploadChunk" => {
+            let upload_id = command
+                .upload_id
+                .as_deref()
+                .ok_or("sideStoreUploadChunk requires uploadId")?;
+            let offset = command
+                .offset
+                .ok_or("sideStoreUploadChunk requires offset")?;
+            let bytes = BASE64.decode(
+                command
+                    .data
+                    .as_deref()
+                    .ok_or("sideStoreUploadChunk requires data")?,
+            )?;
+            let upload = side_store_uploads
+                .get_mut(upload_id)
+                .ok_or("Unknown SideStore upload")?;
+            if offset != upload.received_size
+                || upload.received_size + bytes.len() > upload.expected_size
+            {
+                return Err("SideStore upload chunk is out of order".into());
+            }
+            let mut file = tokio::fs::OpenOptions::new()
+                .append(true)
+                .open(&upload.path)
+                .await?;
+            file.write_all(&bytes).await?;
+            upload.received_size += bytes.len();
+            return Ok(Some(side_store_result(
+                "sideStoreUploadChunk",
+                json!({ "received": upload.received_size }),
+            )));
+        }
+        "sideStoreUploadCommit" => {
+            let upload_id = command
+                .upload_id
+                .as_deref()
+                .ok_or("sideStoreUploadCommit requires uploadId")?;
+            let upload = side_store_uploads
+                .remove(upload_id)
+                .ok_or("Unknown SideStore upload")?;
+            if upload.received_size != upload.expected_size {
+                let _ = tokio::fs::remove_file(upload.path).await;
+                return Err("SideStore upload is incomplete".into());
+            }
+            if let Some(previous) = side_store_packages.insert(upload.bundle_id, upload.path) {
+                let _ = tokio::fs::remove_file(previous).await;
+            }
+            return Ok(Some(side_store_result("sideStoreUploadCommit", json!({}))));
+        }
+        "sideStoreInstallIPA" => {
+            let bundle_id = command
+                .bundle_id
+                .as_deref()
+                .ok_or("sideStoreInstallIPA requires bundleId")?;
+            let path = side_store_packages
+                .remove(bundle_id)
+                .ok_or("No uploaded IPA is ready for this bundle")?;
+            let result = installation::install_package_rsd(adapter, handshake, &path, None).await;
+            let _ = tokio::fs::remove_file(path).await;
+            result?;
+            return Ok(Some(side_store_result("sideStoreInstallIPA", json!({}))));
+        }
+        "sideStoreDumpProfiles" => {
+            return Err("Provisioning profile export is not available through a native StikServer target yet".into());
+        }
         "touch" => {
             let state = match command.phase.as_deref() {
                 Some("down" | "move") => TOUCHSCREEN_STATE_CONTACT,
@@ -1035,6 +1217,14 @@ fn command_result(command: &str, data: serde_json::Value) -> serde_json::Value {
         "ok": true,
         "data": data
     })
+}
+
+fn side_store_result(command: &str, values: serde_json::Value) -> serde_json::Value {
+    let mut result = values.as_object().cloned().unwrap_or_default();
+    result.insert("type".into(), "sideStoreResult".into());
+    result.insert("command".into(), command.into());
+    result.insert("ok".into(), true.into());
+    serde_json::Value::Object(result)
 }
 
 async fn press_button(

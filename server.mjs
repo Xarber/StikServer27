@@ -225,6 +225,9 @@ class WebSocketPeer {
         height: Number(message.device.height || 0),
         connected: true,
         controllable: true,
+        capabilities: Array.isArray(message.device.capabilities)
+          ? message.device.capabilities.map(value => String(value))
+          : [],
         mode: "relay"
       };
       agents.set(id, { peer: this, metadata });
