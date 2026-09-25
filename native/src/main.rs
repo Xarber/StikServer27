@@ -63,6 +63,7 @@ struct Arguments {
     output: Option<PathBuf>,
     identifier: Option<String>,
     auth_tag: Option<String>,
+    headless: bool,
 }
 
 #[derive(Deserialize)]
@@ -147,8 +148,13 @@ fn parse_arguments() -> Result<Arguments, Box<dyn std::error::Error>> {
         output: None,
         identifier: None,
         auth_tag: None,
+        headless: false,
     };
     while let Some(flag) = values.next() {
+        if flag == "--headless" {
+            result.headless = true;
+            continue;
+        }
         let value = values
             .next()
             .ok_or_else(|| format!("missing value for {flag}"))?;
@@ -288,7 +294,11 @@ async fn stream(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> 
     let mut handshake = RsdHandshake::new(rsd_stream).await?;
     let device_uuid = handshake.uuid.clone();
 
-    let mut media = start_screen_media_session(&mut handle, &mut handshake).await?;
+    let mut media = if arguments.headless {
+        None
+    } else {
+        Some(start_screen_media_session(&mut handle, &mut handshake).await?)
+    };
     let mut universal_hid =
         UniversalHidServiceClient::connect_rsd(&mut handle, &mut handshake).await?;
     let mut main_keyboard = universal_hid.create_main_keyboard().await.ok();
@@ -362,7 +372,13 @@ async fn stream(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> 
             Some(event) = battery_event_rx.recv() => {
                 write_event(&mut output, event).await?;
             }
-            datagram = media.video_udp.recv() => {
+            datagram = async {
+                match media.as_mut() {
+                    Some(media) => Some(media.video_udp.recv().await),
+                    None => std::future::pending().await,
+                }
+            } => {
+                let Some(datagram) = datagram else { continue };
                 let datagram = datagram?;
                 let Some(packet) = RtpPacket::parse(&datagram.data) else { continue };
                 if packet.payload_type != 100 { continue; }
@@ -464,8 +480,10 @@ async fn stream(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> 
     for path in side_store_packages.into_values() {
         let _ = tokio::fs::remove_file(path).await;
     }
-    let _ = media.display.stop_media_stream().await;
-    drop(media.audio_udp);
+    if let Some(mut media) = media {
+        let _ = media.display.stop_media_stream().await;
+        drop(media.audio_udp);
+    }
     Ok(())
 }
 
@@ -725,6 +743,40 @@ async fn handle_command(
             return Ok(Some(side_store_result(
                 "sideStoreUDID",
                 json!({ "udid": device_uuid }),
+            )));
+        }
+        "sideStoreListApps" => {
+            let mut client = InstallationProxyClient::connect_rsd(adapter, handshake).await?;
+            let installed = client.get_apps(Some("User"), None).await?;
+            let apps = installed
+                .into_iter()
+                .map(|(bundle_id, value)| {
+                    let dictionary = value.as_dictionary();
+                    let string = |key: &str| {
+                        dictionary
+                            .and_then(|values| values.get(key))
+                            .and_then(|value| value.as_string())
+                            .unwrap_or_default()
+                    };
+                    let display_name = {
+                        let value = string("CFBundleDisplayName");
+                        if value.is_empty() {
+                            string("CFBundleName")
+                        } else {
+                            value
+                        }
+                    };
+                    json!({
+                        "bundleId": bundle_id,
+                        "name": display_name,
+                        "version": string("CFBundleShortVersionString"),
+                        "buildVersion": string("CFBundleVersion")
+                    })
+                })
+                .collect::<Vec<_>>();
+            return Ok(Some(side_store_result(
+                "sideStoreListApps",
+                json!({ "apps": apps }),
             )));
         }
         "sideStoreInstallProfile" => {

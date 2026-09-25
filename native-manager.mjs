@@ -76,6 +76,7 @@ export class NativeDeviceManager extends EventEmitter {
     this.ffmpeg = options.ffmpeg || process.env.STIKSERVER_FFMPEG || "ffmpeg";
     this.pairingDirectory = options.pairingDirectory || process.env.STIKSERVER_PAIRING_DIR || join(projectRoot, "pairings");
     this.sessions = new Map();
+    this.commandSessions = new Map();
     this.pairingSessions = new Map();
     this.resolvedPairings = new Map();
     this.binaryAvailable = false;
@@ -122,7 +123,7 @@ export class NativeDeviceManager extends EventEmitter {
       ...device,
       paired,
       controllable: paired && this.binaryAvailable && this.ffmpegAvailable,
-      capabilities: paired && this.binaryAvailable && this.ffmpegAvailable
+      capabilities: paired && this.binaryAvailable
         ? [...new Set([...(device.capabilities || []), "sidestore.device.v1"])]
         : (device.capabilities || []),
       connected: Boolean(session && !session.stopped),
@@ -327,7 +328,111 @@ export class NativeDeviceManager extends EventEmitter {
     }
   }
 
+  async startCommand(device) {
+    const existing = this.commandSessions.get(device.id);
+    if (existing && !existing.stopped) return existing.ready;
+    const description = await this.describe(device);
+    if (!description.paired || !this.binaryAvailable) {
+      throw new Error(description.backendMessage || "Device command services are not ready");
+    }
+    const address = preferredAddress(device);
+    if (!address) throw new Error("The discovered device has no reachable address");
+
+    const native = spawn(this.binary, [
+      "stream",
+      "--host", address,
+      "--port", String(device.port),
+      "--pairing", this.pairingPath(device),
+      "--headless"
+    ], { stdio: ["pipe", "pipe", "pipe"] });
+    let readyResolve;
+    let readyReject;
+    const ready = new Promise((resolve, reject) => {
+      readyResolve = resolve;
+      readyReject = reject;
+    });
+    const session = {
+      device, native, stopped: false, ready, readyResolve, readyReject,
+      didBecomeReady: false, stderr: "", pendingRequestIds: new Set()
+    };
+    this.commandSessions.set(device.id, session);
+    native.stdin.on("error", error => this.handleCommandInputError(session, error));
+    const records = new FramedRecordParser((type, payload) => {
+      if (type !== 2) return;
+      try {
+        const event = JSON.parse(payload.toString("utf8"));
+        if (event.type === "ready" && !session.didBecomeReady) {
+          session.didBecomeReady = true;
+          session.readyResolve(session);
+        }
+        if (event.requestId) session.pendingRequestIds.delete(String(event.requestId));
+        this.emit("event", device.id, event);
+      } catch (error) {
+        this.emit("error", error);
+      }
+    });
+    native.stdout.on("data", chunk => {
+      try { records.push(chunk); }
+      catch (error) { this.commandSessionEnded(device.id, error.message); }
+    });
+    native.stderr.on("data", chunk => {
+      const line = chunk.toString("utf8").trim();
+      session.stderr += `${line}\n`;
+      if (line) this.emit("log", device.id, `commands: ${line}`);
+    });
+    native.once("error", error => this.commandSessionEnded(device.id, error.message));
+    native.once("exit", (code, signal) => {
+      const detail = session.stderr.trim() || `native command backend exited (${code ?? signal})`;
+      this.commandSessionEnded(device.id, detail);
+    });
+    const startupTimer = setTimeout(() => {
+      if (!session.didBecomeReady) this.commandSessionEnded(device.id, "Native command backend did not become ready in time");
+    }, 20_000);
+    ready.finally(() => clearTimeout(startupTimer)).catch(() => {});
+    return ready;
+  }
+
+  sendCommand(deviceId, command) {
+    const session = this.commandSessions.get(deviceId);
+    if (!session || session.stopped || !session.didBecomeReady) throw new Error("Device command session is not active");
+    if (command.requestId) session.pendingRequestIds.add(String(command.requestId));
+    if (!writeToChild(session.native, `${JSON.stringify(command)}\n`, error => this.handleCommandInputError(session, error))) {
+      if (command.requestId) session.pendingRequestIds.delete(String(command.requestId));
+      throw new Error("Device command session is not active");
+    }
+  }
+
+  stopCommand(deviceId) {
+    const session = this.commandSessions.get(deviceId);
+    if (!session || session.stopped) return;
+    session.stopped = true;
+    writeToChild(session.native, '{"command":"stop"}\n');
+    session.native.kill("SIGTERM");
+    this.commandSessions.delete(deviceId);
+  }
+
+  commandSessionEnded(deviceId, message) {
+    const session = this.commandSessions.get(deviceId);
+    if (!session || session.stopped) return;
+    session.stopped = true;
+    this.commandSessions.delete(deviceId);
+    if (!session.didBecomeReady) session.readyReject(new Error(message));
+    for (const requestId of session.pendingRequestIds) {
+      this.emit("event", deviceId, {
+        type: "sideStoreResult", requestId, ok: false, message
+      });
+    }
+    session.pendingRequestIds.clear();
+    this.emit("log", deviceId, message);
+  }
+
+  handleCommandInputError(session, error) {
+    if (session.stopped || error?.code === "EPIPE" || error?.code === "ERR_STREAM_DESTROYED") return;
+    this.commandSessionEnded(session.device.id, error.message);
+  }
+
   stop(deviceId, notifyBackend = true) {
+    this.stopCommand(deviceId);
     const session = this.sessions.get(deviceId);
     if (!session || session.stopped) return;
     session.stopped = true;
@@ -340,6 +445,7 @@ export class NativeDeviceManager extends EventEmitter {
 
   stopAll() {
     for (const deviceId of [...this.sessions.keys()]) this.stop(deviceId);
+    for (const deviceId of [...this.commandSessions.keys()]) this.stopCommand(deviceId);
     for (const pairing of this.pairingSessions.values()) pairing.child.kill("SIGTERM");
     this.pairingSessions.clear();
   }

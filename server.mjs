@@ -315,8 +315,8 @@ class WebSocketPeer {
         const direct = directDevices.find(device => device.id === id);
         if (!direct) return sendJSON(this, { type: "error", message: "Device is offline" });
         this.commandDevices.add(id);
-        nativeDevices.start(direct)
-          .then(() => nativeDevices.send(id, message))
+        nativeDevices.startCommand(direct)
+          .then(() => nativeDevices.sendCommand(id, message))
           .catch(error => sendJSON(this, { type: "error", message: error.message }));
         return;
       }
