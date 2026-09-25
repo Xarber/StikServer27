@@ -704,6 +704,23 @@ async fn handle_command(
         "sideStoreBegin" | "sideStoreEnd" | "sideStoreReady" => {
             return Ok(Some(side_store_result(&command.command, json!({}))));
         }
+        "sideStoreHealth" => {
+            // Reaching this handler means the RSD tunnel, developer services,
+            // and the device's remote-pairing record are all active. Probe
+            // misagent as well because SideStore relies on it for profiles.
+            let _ = MisagentClient::connect_rsd(adapter, handshake).await?;
+            return Ok(Some(side_store_result(
+                "sideStoreHealth",
+                json!({
+                    "reachable": true,
+                    "pairingLoaded": true,
+                    "pairingVerified": true,
+                    "ddiMounted": true,
+                    "protocol": "Remote Pairing",
+                    "udid": device_uuid
+                }),
+            )));
+        }
         "sideStoreUDID" => {
             return Ok(Some(side_store_result(
                 "sideStoreUDID",
@@ -839,7 +856,16 @@ async fn handle_command(
             return Ok(Some(side_store_result("sideStoreInstallIPA", json!({}))));
         }
         "sideStoreDumpProfiles" => {
-            return Err("Provisioning profile export is not available through a native StikServer target yet".into());
+            let mut client = MisagentClient::connect_rsd(adapter, handshake).await?;
+            let profiles = client.copy_all().await?;
+            let profiles = profiles
+                .into_iter()
+                .map(|profile| BASE64.encode(profile))
+                .collect::<Vec<_>>();
+            return Ok(Some(side_store_result(
+                "sideStoreDumpProfiles",
+                json!({ "profiles": profiles }),
+            )));
         }
         "touch" => {
             let state = match command.phase.as_deref() {
