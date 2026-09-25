@@ -292,13 +292,21 @@ async fn stream(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> 
     let mut handle = adapter.to_async_handle();
     let rsd_stream = handle.connect(rsd_port).await?;
     let mut handshake = RsdHandshake::new(rsd_stream).await?;
-    let device_uuid = handshake.uuid.clone();
+    // The top-level RSD UUID identifies this CoreDevice session. Apple device
+    // registration needs the stable hardware UDID exposed in Properties.
+    let device_uuid = handshake
+        .properties
+        .get("UniqueDeviceID")
+        .and_then(|value| value.as_string())
+        .filter(|value| !value.is_empty())
+        .ok_or("RSD handshake did not include UniqueDeviceID")?
+        .to_string();
 
-    let mut media = if arguments.headless {
-        None
-    } else {
-        Some(start_screen_media_session(&mut handle, &mut handshake).await?)
-    };
+    if arguments.headless {
+        return side_store_command_loop(&mut handle, &mut handshake, &device_uuid).await;
+    }
+
+    let mut media = Some(start_screen_media_session(&mut handle, &mut handshake).await?);
     let mut universal_hid =
         UniversalHidServiceClient::connect_rsd(&mut handle, &mut handshake).await?;
     let mut main_keyboard = universal_hid.create_main_keyboard().await.ok();
@@ -697,6 +705,257 @@ async fn start_screen_media_session(
         audio_udp,
         video_udp,
     })
+}
+
+async fn side_store_command_loop(
+    adapter: &mut tcp::handle::AdapterHandle,
+    handshake: &mut RsdHandshake,
+    device_uuid: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut stdin_lines = BufReader::new(tokio::io::stdin()).lines();
+    let mut output = tokio::io::stdout();
+    let mut uploads = HashMap::new();
+    let mut packages = HashMap::new();
+    write_event(&mut output, json!({ "type": "ready" })).await?;
+
+    while let Some(line) = stdin_lines.next_line().await? {
+        let command: ControlCommand = serde_json::from_str(&line)?;
+        if command.command == "stop" {
+            break;
+        }
+        let command_name = command.command.clone();
+        let request_id = command.request_id.clone();
+        let result = handle_side_store_command(
+            command,
+            adapter,
+            handshake,
+            device_uuid,
+            &mut uploads,
+            &mut packages,
+        )
+        .await;
+        let mut event = match result {
+            Ok(Some(event)) => event,
+            Ok(None) => json!({
+                "type": "commandResult",
+                "command": command_name,
+                "ok": false,
+                "message": "This headless session only accepts SideStore commands"
+            }),
+            Err(error) => json!({
+                "type": "commandResult",
+                "command": command_name,
+                "ok": false,
+                "message": error.to_string()
+            }),
+        };
+        if let (Some(request_id), Some(object)) = (request_id, event.as_object_mut()) {
+            object.insert("requestId".into(), request_id.into());
+        }
+        write_event(&mut output, event).await?;
+    }
+    for upload in uploads.into_values() {
+        let _ = tokio::fs::remove_file(upload.path).await;
+    }
+    for path in packages.into_values() {
+        let _ = tokio::fs::remove_file(path).await;
+    }
+    Ok(())
+}
+
+async fn handle_side_store_command(
+    command: ControlCommand,
+    adapter: &mut tcp::handle::AdapterHandle,
+    handshake: &mut RsdHandshake,
+    device_uuid: &str,
+    uploads: &mut HashMap<String, SideStoreUpload>,
+    packages: &mut HashMap<String, PathBuf>,
+) -> Result<Option<serde_json::Value>, Box<dyn std::error::Error>> {
+    let event = match command.command.as_str() {
+        "sideStoreBegin" | "sideStoreEnd" | "sideStoreReady" => {
+            side_store_result(&command.command, json!({}))
+        }
+        "sideStoreHealth" => {
+            let _ = MisagentClient::connect_rsd(adapter, handshake).await?;
+            side_store_result(
+                "sideStoreHealth",
+                json!({
+                    "reachable": true,
+                    "pairingLoaded": true,
+                    "pairingVerified": true,
+                    "ddiMounted": true,
+                    "protocol": "Remote Pairing",
+                    "udid": device_uuid
+                }),
+            )
+        }
+        "sideStoreUDID" => side_store_result("sideStoreUDID", json!({ "udid": device_uuid })),
+        "sideStoreListApps" => {
+            let mut client = InstallationProxyClient::connect_rsd(adapter, handshake).await?;
+            let installed = client.get_apps(Some("User"), None).await?;
+            let apps = installed
+                .into_iter()
+                .map(|(bundle_id, value)| {
+                    let dictionary = value.as_dictionary();
+                    let string = |key: &str| {
+                        dictionary
+                            .and_then(|values| values.get(key))
+                            .and_then(|value| value.as_string())
+                            .unwrap_or_default()
+                    };
+                    let display_name = match string("CFBundleDisplayName") {
+                        "" => string("CFBundleName"),
+                        value => value,
+                    };
+                    json!({
+                        "bundleId": bundle_id,
+                        "name": display_name,
+                        "version": string("CFBundleShortVersionString"),
+                        "buildVersion": string("CFBundleVersion")
+                    })
+                })
+                .collect::<Vec<_>>();
+            side_store_result("sideStoreListApps", json!({ "apps": apps }))
+        }
+        "sideStoreInstallProfile" => {
+            let profile = BASE64.decode(
+                command
+                    .data
+                    .as_deref()
+                    .ok_or("sideStoreInstallProfile requires data")?,
+            )?;
+            let mut client = MisagentClient::connect_rsd(adapter, handshake).await?;
+            client.install(profile).await?;
+            side_store_result("sideStoreInstallProfile", json!({}))
+        }
+        "sideStoreRemoveProfile" => {
+            let identifier = command
+                .identifier
+                .as_deref()
+                .ok_or("sideStoreRemoveProfile requires identifier")?;
+            let mut client = MisagentClient::connect_rsd(adapter, handshake).await?;
+            client.remove(identifier).await?;
+            side_store_result("sideStoreRemoveProfile", json!({}))
+        }
+        "sideStoreRemoveApp" => {
+            let bundle_id = command
+                .bundle_id
+                .as_deref()
+                .ok_or("sideStoreRemoveApp requires bundleId")?;
+            let mut client = InstallationProxyClient::connect_rsd(adapter, handshake).await?;
+            client.uninstall(bundle_id, None).await?;
+            side_store_result("sideStoreRemoveApp", json!({}))
+        }
+        "sideStoreUploadBegin" => {
+            let upload_id = command
+                .upload_id
+                .as_deref()
+                .ok_or("sideStoreUploadBegin requires uploadId")?;
+            let bundle_id = command
+                .bundle_id
+                .clone()
+                .ok_or("sideStoreUploadBegin requires bundleId")?;
+            let expected_size = command
+                .size
+                .as_ref()
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or("sideStoreUploadBegin requires a numeric size")?;
+            if expected_size == 0 || expected_size > 4 * 1024 * 1024 * 1024usize {
+                return Err("SideStore upload size is invalid".into());
+            }
+            if let Some(previous) = uploads.remove(upload_id) {
+                let _ = tokio::fs::remove_file(previous.path).await;
+            }
+            let path = env::temp_dir().join(format!("stikserver-{}.ipa", Uuid::new_v4()));
+            tokio::fs::File::create(&path).await?;
+            uploads.insert(
+                upload_id.to_string(),
+                SideStoreUpload {
+                    path,
+                    bundle_id,
+                    expected_size,
+                    received_size: 0,
+                },
+            );
+            side_store_result("sideStoreUploadBegin", json!({}))
+        }
+        "sideStoreUploadChunk" => {
+            let upload_id = command
+                .upload_id
+                .as_deref()
+                .ok_or("sideStoreUploadChunk requires uploadId")?;
+            let offset = command
+                .offset
+                .ok_or("sideStoreUploadChunk requires offset")?;
+            let bytes = BASE64.decode(
+                command
+                    .data
+                    .as_deref()
+                    .ok_or("sideStoreUploadChunk requires data")?,
+            )?;
+            let upload = uploads
+                .get_mut(upload_id)
+                .ok_or("Unknown SideStore upload")?;
+            if offset != upload.received_size
+                || upload.received_size + bytes.len() > upload.expected_size
+            {
+                return Err("SideStore upload chunk is out of order".into());
+            }
+            let mut file = tokio::fs::OpenOptions::new()
+                .append(true)
+                .open(&upload.path)
+                .await?;
+            file.write_all(&bytes).await?;
+            upload.received_size += bytes.len();
+            side_store_result(
+                "sideStoreUploadChunk",
+                json!({ "received": upload.received_size }),
+            )
+        }
+        "sideStoreUploadCommit" => {
+            let upload_id = command
+                .upload_id
+                .as_deref()
+                .ok_or("sideStoreUploadCommit requires uploadId")?;
+            let upload = uploads
+                .remove(upload_id)
+                .ok_or("Unknown SideStore upload")?;
+            if upload.received_size != upload.expected_size {
+                let _ = tokio::fs::remove_file(upload.path).await;
+                return Err("SideStore upload is incomplete".into());
+            }
+            if let Some(previous) = packages.insert(upload.bundle_id, upload.path) {
+                let _ = tokio::fs::remove_file(previous).await;
+            }
+            side_store_result("sideStoreUploadCommit", json!({}))
+        }
+        "sideStoreInstallIPA" => {
+            let bundle_id = command
+                .bundle_id
+                .as_deref()
+                .ok_or("sideStoreInstallIPA requires bundleId")?;
+            let path = packages
+                .remove(bundle_id)
+                .ok_or("No uploaded IPA is ready for this bundle")?;
+            let result = installation::install_package_rsd(adapter, handshake, &path, None).await;
+            let _ = tokio::fs::remove_file(path).await;
+            result?;
+            side_store_result("sideStoreInstallIPA", json!({}))
+        }
+        "sideStoreDumpProfiles" => {
+            let mut client = MisagentClient::connect_rsd(adapter, handshake).await?;
+            let profiles = client
+                .copy_all()
+                .await?
+                .into_iter()
+                .map(|profile| BASE64.encode(profile))
+                .collect::<Vec<_>>();
+            side_store_result("sideStoreDumpProfiles", json!({ "profiles": profiles }))
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(event))
 }
 
 async fn handle_command(
