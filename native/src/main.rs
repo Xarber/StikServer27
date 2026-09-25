@@ -872,7 +872,8 @@ async fn handle_side_store_command(
                         "bundleId": bundle_id,
                         "name": display_name,
                         "version": string("CFBundleShortVersionString"),
-                        "buildVersion": string("CFBundleVersion")
+                        "buildVersion": string("CFBundleVersion"),
+                        "signerIdentity": string("SignerIdentity")
                     })
                 })
                 .collect::<Vec<_>>();
@@ -1098,7 +1099,8 @@ async fn handle_command(
                         "bundleId": bundle_id,
                         "name": display_name,
                         "version": string("CFBundleShortVersionString"),
-                        "buildVersion": string("CFBundleVersion")
+                        "buildVersion": string("CFBundleVersion"),
+                        "signerIdentity": string("SignerIdentity")
                     })
                 })
                 .collect::<Vec<_>>();
