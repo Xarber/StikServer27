@@ -36,7 +36,11 @@ use idevice::{
         RemotePairingClient, RpPairingFile, RpPairingSocket, connect_tls_psk_tunnel_native,
     },
     rsd::RsdHandshake,
-    services::{installation_proxy::InstallationProxyClient, misagent::MisagentClient},
+    services::{
+        debug_proxy::{DebugProxyClient, DebugserverCommand},
+        installation_proxy::InstallationProxyClient,
+        misagent::MisagentClient,
+    },
     springboardservices::{InterfaceOrientation, SpringBoardServicesClient},
     tcp,
     utils::installation,
@@ -707,6 +711,55 @@ async fn start_screen_media_session(
     })
 }
 
+async fn side_store_debug_app(
+    adapter: &mut tcp::handle::AdapterHandle,
+    handshake: &mut RsdHandshake,
+    bundle_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut installation = InstallationProxyClient::connect_rsd(adapter, handshake).await?;
+    let apps = installation.get_apps(Some("User"), None).await?;
+    let app = apps
+        .get(bundle_id)
+        .ok_or("The app is not installed on the selected device")?;
+    let executable = app
+        .as_dictionary()
+        .and_then(|values| values.get("CFBundleExecutable"))
+        .and_then(|value| value.as_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(bundle_id);
+    let mut debugger = DebugProxyClient::connect_rsd(adapter, handshake).await?;
+    let encoded = executable
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let response = tokio::time::timeout(
+        Duration::from_secs(40),
+        debugger.send_command(DebugserverCommand::new(
+            format!("vAttachName;{encoded}"),
+            Vec::new(),
+        )),
+    )
+    .await??;
+    match response.as_deref() {
+        Some(value) if value.starts_with('T') || value.starts_with('S') => {
+            let detached = tokio::time::timeout(
+                Duration::from_secs(10),
+                debugger.send_command(DebugserverCommand::new("D".into(), Vec::new())),
+            )
+            .await??;
+            if detached.as_deref() != Some("OK") {
+                return Err("Debug proxy did not confirm detach".into());
+            }
+            Ok(())
+        }
+        _ => Err(
+            "The app is not running on the selected device, or the debugger could not attach"
+                .into(),
+        ),
+    }
+}
+
 async fn side_store_command_loop(
     adapter: &mut tcp::handle::AdapterHandle,
     handshake: &mut RsdHandshake,
@@ -790,6 +843,14 @@ async fn handle_side_store_command(
             )
         }
         "sideStoreUDID" => side_store_result("sideStoreUDID", json!({ "udid": device_uuid })),
+        "sideStoreDebugApp" => {
+            let bundle_id = command
+                .bundle_id
+                .as_deref()
+                .ok_or("sideStoreDebugApp requires bundleId")?;
+            side_store_debug_app(adapter, handshake, bundle_id).await?;
+            side_store_result("sideStoreDebugApp", json!({}))
+        }
         "sideStoreListApps" => {
             let mut client = InstallationProxyClient::connect_rsd(adapter, handshake).await?;
             let installed = client.get_apps(Some("User"), None).await?;
@@ -1003,6 +1064,14 @@ async fn handle_command(
                 "sideStoreUDID",
                 json!({ "udid": device_uuid }),
             )));
+        }
+        "sideStoreDebugApp" => {
+            let bundle_id = command
+                .bundle_id
+                .as_deref()
+                .ok_or("sideStoreDebugApp requires bundleId")?;
+            side_store_debug_app(adapter, handshake, bundle_id).await?;
+            return Ok(Some(side_store_result("sideStoreDebugApp", json!({}))));
         }
         "sideStoreListApps" => {
             let mut client = InstallationProxyClient::connect_rsd(adapter, handshake).await?;
