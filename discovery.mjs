@@ -311,8 +311,9 @@ export class RemotePairingDiscovery extends EventEmitter {
     for (const instance of this.instances.values()) {
       if (!isRemotePairingInstance(instance.instance) || !instance.target || !instance.port) continue;
       const addresses = [...(this.hostAddresses.get(instance.target)?.keys() || [])];
-      const stableIdentifier = instance.txt.udid || instance.txt.deviceIdentifier || instance.txt.serialNumber;
-      const physicalKey = stableIdentifier || addresses.find(address => !address.includes(":")) || instance.target;
+      // Several advertisements from one device can disagree on identifier or
+      // arrive before its A record. The Bonjour target is the common identity.
+      const physicalKey = instance.target.toLowerCase().replace(/\.$/, "");
       const current = groups.get(physicalKey) || [];
       current.push({ instance, addresses });
       groups.set(physicalKey, current);

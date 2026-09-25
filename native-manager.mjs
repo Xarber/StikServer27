@@ -79,6 +79,7 @@ export class NativeDeviceManager extends EventEmitter {
     this.commandSessions = new Map();
     this.pairingSessions = new Map();
     this.resolvedPairings = new Map();
+    this.pairingMatches = new Map();
     this.binaryAvailable = false;
     this.ffmpegAvailable = false;
   }
@@ -109,13 +110,25 @@ export class NativeDeviceManager extends EventEmitter {
 
   async describe(device) {
     let pairingFile = this.pairingPath(device);
-    let paired = await readable(pairingFile);
-    if (!paired && this.binaryAvailable) {
-      const matching = await this.findMatchingPairing(device);
-      if (matching) {
-        pairingFile = matching;
+    const candidates = pairingCandidates(device);
+    const fingerprint = JSON.stringify(candidates);
+    let paired = false;
+    if (this.binaryAvailable && candidates.length) {
+      const cached = this.pairingMatches.get(device.id);
+      if (cached?.fingerprint === fingerprint && await readable(cached.path)) {
+        pairingFile = cached.path;
         paired = true;
-        this.resolvedPairings.set(device.id, matching);
+      } else {
+        const matching = await this.findMatchingPairing(device);
+        if (matching) {
+          pairingFile = matching;
+          paired = true;
+          this.resolvedPairings.set(device.id, matching);
+          this.pairingMatches.set(device.id, { fingerprint, path: matching });
+        } else {
+          this.resolvedPairings.delete(device.id);
+          this.pairingMatches.delete(device.id);
+        }
       }
     }
     const session = this.sessions.get(device.id);
@@ -153,6 +166,7 @@ export class NativeDeviceManager extends EventEmitter {
       await unlink(destination).catch(() => {});
       await rename(temporary, destination);
       this.resolvedPairings.set(device.id, destination);
+      this.pairingMatches.delete(device.id);
       this.emit("pairing", device.id, { state: "ready" });
       return destination;
     } catch (error) {

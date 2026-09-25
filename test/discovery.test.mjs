@@ -43,8 +43,8 @@ test("parses and publishes a remote-pairing service", () => {
   const discovery = new RemotePairingDiscovery();
   discovery.consume(records);
   assert.deepEqual(discovery.devices()[0], {
-    id: "direct:192.168.1.20",
-    pairingIdentifier: "192.168.1.20",
+    id: "direct:ipad.local",
+    pairingIdentifier: "ipad.local",
     serviceIdentifier: "ABC",
     pairingCandidates: [{ identifier: "ABC", authenticationTags: [] }],
     name: "ipad",
@@ -73,7 +73,7 @@ test("groups rotating advertisements for the same physical device", () => {
   });
   const devices = discovery.devices();
   assert.equal(devices.length, 1);
-  assert.equal(devices[0].id, "direct:192.168.1.20");
+  assert.equal(devices[0].id, "direct:ipad.local");
   assert.equal(devices[0].port, 49153);
   assert.deepEqual(devices[0].authenticationTags.sort(), ["new-tag", "old-tag"]);
   assert.equal(devices[0].pairingCandidates.length, 2);
