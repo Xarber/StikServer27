@@ -83,7 +83,7 @@ struct ControlCommand {
     style: Option<String>,
     enabled: Option<bool>,
     value: Option<f64>,
-    size: Option<String>,
+    size: Option<serde_json::Value>,
     filter_type: Option<String>,
     group_identifier: Option<String>,
     profile_identifier: Option<String>,
@@ -91,7 +91,6 @@ struct ControlCommand {
     bundle_id: Option<String>,
     identifier: Option<String>,
     data: Option<String>,
-    size: Option<usize>,
     offset: Option<usize>,
 }
 
@@ -751,7 +750,12 @@ async fn handle_command(
                 .bundle_id
                 .clone()
                 .ok_or("sideStoreUploadBegin requires bundleId")?;
-            let expected_size = command.size.ok_or("sideStoreUploadBegin requires size")?;
+            let expected_size = command
+                .size
+                .as_ref()
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or("sideStoreUploadBegin requires a numeric size")?;
             if expected_size == 0 || expected_size > 4 * 1024 * 1024 * 1024usize {
                 return Err("SideStore upload size is invalid".into());
             }
@@ -1118,7 +1122,11 @@ async fn handle_command(
             )));
         }
         "setTextSize" => {
-            let size = command.size.as_deref().ok_or("setTextSize requires size")?;
+            let size = command
+                .size
+                .as_ref()
+                .and_then(serde_json::Value::as_str)
+                .ok_or("setTextSize requires size")?;
             configuration.set_device_text_size(size).await?;
             return Ok(Some(command_result("setTextSize", json!({ "size": size }))));
         }
