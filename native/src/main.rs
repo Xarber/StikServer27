@@ -548,47 +548,65 @@ async fn read_battery_analytics(
     client: &mut CrashReportCopyMobileClient,
 ) -> Result<Vec<serde_json::Value>, IdeviceError> {
     let mut names = Vec::new();
-    let mut directories = VecDeque::from([(None::<String>, 0_usize)]);
-    while let Some((directory, depth)) = directories.pop_front() {
-        let entries = match client.ls(directory.as_deref()).await {
-            Ok(entries) => entries,
-            Err(error) if directory.is_none() => return Err(error),
-            Err(_) => continue,
-        };
+    let mut directories = VecDeque::from(["/".to_string()]);
+    while let Some(directory) = directories.pop_front() {
+        // Use absolute AFC paths and actual file types. Guessing directories
+        // from filename extensions skipped folders and hid listing failures.
+        let entries = client.afc_client.list_dir(&directory).await?;
         for name in entries {
             if name == "." || name == ".." {
                 continue;
             }
-            let path = directory
-                .as_ref()
-                .map(|directory| format!("{directory}/{name}"))
-                .unwrap_or_else(|| name.clone());
+            let path = format!("{}/{name}", directory.trim_end_matches('/'));
             let lower = name.to_ascii_lowercase();
-            if lower.contains("analytics-") || lower.contains("log-aggregated-") {
-                names.push(path);
+            if lower.starts_with("proxieddevice-") {
                 continue;
             }
-            let looks_like_file = [
-                ".ips", ".crash", ".panic", ".log", ".txt", ".synced", ".plist",
-            ]
-            .iter()
-            .any(|extension| lower.contains(extension));
-            if depth < 3 && !lower.starts_with("proxieddevice-") && !looks_like_file {
-                directories.push_back((Some(path), depth + 1));
+            let attributes = client.afc_client.get_file_info_raw(&path).await?;
+            match attributes.get("st_ifmt").map(String::as_str) {
+                Some("S_IFDIR") => {
+                    directories.push_back(path);
+                    continue;
+                }
+                Some("S_IFREG") => {}
+                _ => continue,
+            }
+            if lower.contains("analytics-") || lower.contains("log-aggregated-") {
+                // pull() adds the leading slash itself.
+                names.push(path.trim_start_matches('/').to_string());
             }
         }
     }
     names.sort();
 
     let mut history = Vec::new();
+    let candidate_count = names.len();
+    let mut last_read_error = None;
     for source_name in names {
-        let Ok(bytes) = client.pull(&source_name).await else {
-            continue;
+        let bytes = match client.pull(&source_name).await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                eprintln!("Cannot read Analytics report {source_name}: {error}");
+                last_read_error = Some(error);
+                continue;
+            }
         };
         let text = String::from_utf8_lossy(&bytes);
         if let Some(sample) = battery_analytics_sample(&text, &source_name) {
             history.push(sample);
         }
+    }
+    if history.is_empty() {
+        if let Some(error) = last_read_error {
+            return Err(error);
+        }
+        return Err(IdeviceError::UnexpectedResponse(if candidate_count == 0 {
+            "No Analytics reports are available in this device's crash-log storage yet".into()
+        } else {
+            format!(
+                "Read {candidate_count} Analytics reports, but none contained battery health or cycle data"
+            )
+        }));
     }
     Ok(history)
 }
