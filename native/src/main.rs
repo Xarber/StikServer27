@@ -50,7 +50,7 @@ use regex::Regex;
 use serde::Deserialize;
 use serde_json::json;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncSeekExt, AsyncWriteExt, BufReader},
     net::TcpStream,
     sync::mpsc,
 };
@@ -716,27 +716,18 @@ async fn side_store_debug_app(
     handshake: &mut RsdHandshake,
     bundle_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut installation = InstallationProxyClient::connect_rsd(adapter, handshake).await?;
-    let apps = installation.get_apps(Some("User"), None).await?;
-    let app = apps
-        .get(bundle_id)
-        .ok_or("The app is not installed on the selected device")?;
-    let executable = app
-        .as_dictionary()
-        .and_then(|values| values.get("CFBundleExecutable"))
-        .and_then(|value| value.as_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or(bundle_id);
+    let mut app_service = AppServiceClient::connect_rsd(adapter, handshake).await?;
+    let launched = app_service
+        .launch_application(bundle_id, &[], false, false, None, None, None)
+        .await?;
+    if launched.pid == 0 {
+        return Err("The device returned no process for the launched app".into());
+    }
     let mut debugger = DebugProxyClient::connect_rsd(adapter, handshake).await?;
-    let encoded = executable
-        .as_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
     let response = tokio::time::timeout(
         Duration::from_secs(40),
         debugger.send_command(DebugserverCommand::new(
-            format!("vAttachName;{encoded}"),
+            format!("vAttach;{:x}", launched.pid),
             Vec::new(),
         )),
     )
@@ -816,6 +807,64 @@ async fn side_store_command_loop(
     Ok(())
 }
 
+async fn side_store_backup_exchange(
+    command: &ControlCommand,
+    adapter: &mut tcp::handle::AdapterHandle,
+    handshake: &mut RsdHandshake,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    use idevice::{afc::opcode::AfcFopenMode, services::house_arrest::HouseArrestClient};
+    let bundle = command.bundle_id.as_deref().ok_or("Missing bundleId")?;
+    let action = command.phase.as_deref().ok_or("Missing transfer action")?;
+    if action == "launch" {
+        let mut apps = AppServiceClient::connect_rsd(adapter, handshake).await?;
+        apps.launch_application(bundle, &[], true, false, None, None, None)
+            .await?;
+        return Ok(side_store_result(
+            "sideStoreBackupExchange",
+            json!({"data": ""}),
+        ));
+    }
+    let file = command
+        .identifier
+        .as_deref()
+        .ok_or("Missing transfer file")?;
+    if !["request.json", "status.json", "backup.bin"].contains(&file)
+        || !["read", "write", "reset"].contains(&action)
+    {
+        return Err("Invalid backup transfer request".into());
+    }
+    let bytes = BASE64.decode(command.data.as_deref().unwrap_or(""))?;
+    if bytes.len() > 262144 {
+        return Err("Backup transfer chunk too large".into());
+    }
+    let mut afc = HouseArrestClient::connect_rsd(adapter, handshake)
+        .await?
+        .vend_container(bundle)
+        .await?;
+    let directory = "/Documents/.sidestore-remote";
+    let _ = afc.mk_dir(directory).await;
+    let mode = match action {
+        "read" => AfcFopenMode::RdOnly,
+        "reset" => AfcFopenMode::WrOnly,
+        _ => AfcFopenMode::Rw,
+    };
+    let mut handle = afc.open(format!("{directory}/{file}"), mode).await?;
+    handle
+        .seek(std::io::SeekFrom::Start(command.offset.unwrap_or(0) as u64))
+        .await?;
+    let result = if action == "read" {
+        handle.read_n(262144).await?
+    } else {
+        handle.write_entire(&bytes).await?;
+        Vec::new()
+    };
+    handle.close().await?;
+    Ok(side_store_result(
+        "sideStoreBackupExchange",
+        json!({"data": BASE64.encode(result)}),
+    ))
+}
+
 async fn handle_side_store_command(
     command: ControlCommand,
     adapter: &mut tcp::handle::AdapterHandle,
@@ -825,6 +874,9 @@ async fn handle_side_store_command(
     packages: &mut HashMap<String, PathBuf>,
 ) -> Result<Option<serde_json::Value>, Box<dyn std::error::Error>> {
     let event = match command.command.as_str() {
+        "sideStoreBackupExchange" => {
+            side_store_backup_exchange(&command, adapter, handshake).await?
+        }
         "sideStoreBegin" | "sideStoreEnd" | "sideStoreReady" => {
             side_store_result(&command.command, json!({}))
         }
@@ -873,7 +925,8 @@ async fn handle_side_store_command(
                         "name": display_name,
                         "version": string("CFBundleShortVersionString"),
                         "buildVersion": string("CFBundleVersion"),
-                        "signerIdentity": string("SignerIdentity")
+                        "signerIdentity": string("SignerIdentity"),
+                        "isBetaApp": dictionary.and_then(|v| v.get("BetaApp")).and_then(|v| v.as_boolean()).unwrap_or(false)
                     })
                 })
                 .collect::<Vec<_>>();
@@ -1040,6 +1093,11 @@ async fn handle_command(
     side_store_packages: &mut HashMap<String, PathBuf>,
 ) -> Result<Option<serde_json::Value>, Box<dyn std::error::Error>> {
     match command.command.as_str() {
+        "sideStoreBackupExchange" => {
+            return Ok(Some(
+                side_store_backup_exchange(&command, adapter, handshake).await?,
+            ));
+        }
         "sideStoreBegin" | "sideStoreEnd" | "sideStoreReady" => {
             return Ok(Some(side_store_result(&command.command, json!({}))));
         }
@@ -1100,7 +1158,8 @@ async fn handle_command(
                         "name": display_name,
                         "version": string("CFBundleShortVersionString"),
                         "buildVersion": string("CFBundleVersion"),
-                        "signerIdentity": string("SignerIdentity")
+                        "signerIdentity": string("SignerIdentity"),
+                        "isBetaApp": dictionary.and_then(|v| v.get("BetaApp")).and_then(|v| v.as_boolean()).unwrap_or(false)
                     })
                 })
                 .collect::<Vec<_>>();

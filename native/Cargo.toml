@@ -5,7 +5,7 @@ edition = "2024"
 license = "MIT"
 
 [dependencies]
-idevice = { git = "https://github.com/jkcoxson/idevice.git", rev = "d32c8189c51c2789496b0768039419c3705498c3", default-features = false, features = ["afc", "aws-lc", "condition_inducer", "core_device", "crashreportcopymobile", "debug_proxy", "device_info", "diagnostics_relay", "display_stream", "dvt", "energy_monitor", "graphics", "installation_proxy", "location_simulation", "misagent", "network_monitor", "remote_pairing", "rsd", "springboardservices", "sysmontap", "tcp", "tunnel_tcp_stack"] }
+idevice = { git = "https://github.com/jkcoxson/idevice.git", rev = "d32c8189c51c2789496b0768039419c3705498c3", default-features = false, features = ["afc", "aws-lc", "condition_inducer", "core_device", "crashreportcopymobile", "debug_proxy", "device_info", "diagnostics_relay", "display_stream", "dvt", "energy_monitor", "graphics", "house_arrest", "installation_proxy", "location_simulation", "misagent", "network_monitor", "remote_pairing", "rsd", "springboardservices", "sysmontap", "tcp", "tunnel_tcp_stack"] }
 base64 = "0.22"
 mdns-sd = "0.19"
 regex = "1"

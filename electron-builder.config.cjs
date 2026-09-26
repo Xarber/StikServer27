@@ -8,6 +8,7 @@ module.exports = {
   directories: { output: "dist" },
   files: [
     "battery-history.mjs",
+    "device-routes.mjs",
     "desktop/**/*",
     "discovery.mjs",
     "native-manager.mjs",

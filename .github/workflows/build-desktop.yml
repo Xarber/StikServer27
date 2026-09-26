@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - battery-history.mjs
+      - device-routes.mjs
       - desktop/**
       - discovery.mjs
       - electron-builder.config.cjs

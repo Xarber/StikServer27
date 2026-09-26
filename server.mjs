@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { RemotePairingDiscovery } from "./discovery.mjs";
 import { NativeDeviceManager } from "./native-manager.mjs";
 import { BatteryHistoryStore } from "./battery-history.mjs";
+import { selectDeviceRoutes } from "./device-routes.mjs";
 
 const host = process.env.STIKSERVER_HOST || "127.0.0.1";
 const port = Number(process.env.STIKSERVER_PORT || 8765);
@@ -39,19 +40,15 @@ function authorized(requestURL) {
 }
 
 function deviceList() {
-  const key = device => device.serviceIdentifier || device.pairingIdentifier || device.id;
-  const routes = new Map(directDevices.map(device => [key(device), device]));
-  for (const { metadata } of agents.values()) {
-    const routeKey = key(metadata);
-    const current = routes.get(routeKey);
-    // Prefer StikServer's own paired LAN connection (zero relay hops). If its
-    // direct discovery is not paired, use the shortest ready StikDebug route.
-    if (current?.mode === "direct" && current.controllable) continue;
-    if (!current || !current.controllable || Number(metadata.routeHops || 1) < Number(current.routeHops || Infinity)) {
-      routes.set(routeKey, metadata);
-    }
-  }
-  return [...routes.values()];
+  return selectDeviceRoutes([...directDevices, ...[...agents.values()].map(agent => agent.metadata)]);
+}
+
+function deviceInventory() {
+  const directDeviceIdentifiers = [...new Set(rawDirectDevices.flatMap(device => [
+    device.id, device.serviceIdentifier, device.pairingIdentifier, device.host,
+    ...(device.addresses || []), ...(device.pairingCandidates || []).map(candidate => candidate.identifier)
+  ]).filter(Boolean).map(value => String(value).toLowerCase()))];
+  return { type: "devices", devices: deviceList(), directDeviceIdentifiers };
 }
 
 function sendJSON(peer, value) {
@@ -59,7 +56,7 @@ function sendJSON(peer, value) {
 }
 
 function publishDevices() {
-  const message = { type: "devices", devices: deviceList() };
+  const message = deviceInventory();
   for (const viewer of viewers) sendJSON(viewer, message);
 }
 
@@ -219,6 +216,7 @@ class WebSocketPeer {
         modelIdentifier: String(message.device.modelIdentifier || ""),
         serviceIdentifier: String(message.device.serviceIdentifier || "") || null,
         pairingIdentifier: String(message.device.pairingIdentifier || "") || null,
+        relayOriginID: String(message.device.relayOriginID || "") || null,
         paired: message.device.paired !== false,
         routeHops: Math.max(1, Number(message.device.routeHops || 1)),
         width: Number(message.device.width || 0),
@@ -485,7 +483,7 @@ server.on("upgrade", (request, socket) => {
   const peer = new WebSocketPeer(socket, role);
   if (role === "viewer") {
     viewers.add(peer);
-    sendJSON(peer, { type: "devices", devices: deviceList() });
+    sendJSON(peer, deviceInventory());
   }
 });
 
