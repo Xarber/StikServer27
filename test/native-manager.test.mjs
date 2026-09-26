@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import test from "node:test";
-import { FramedRecordParser, JpegParser, isPairingPlist, pairingExportFilename, preferredAddress, videoDecoderArguments } from "../native-manager.mjs";
+import { FramedRecordParser, JpegParser, NativeDeviceManager, isPairingPlist, pairingExportFilename, preferredAddress, videoDecoderArguments } from "../native-manager.mjs";
 
 test("parses split native records", () => {
   const records = [];
@@ -59,4 +60,66 @@ test("leaves display orientation to the live SpringBoard transform", () => {
   const arguments_ = videoDecoderArguments();
   assert.ok(arguments_.includes("-noautorotate"));
   assert.ok(arguments_.indexOf("-noautorotate") < arguments_.indexOf("-i"));
+});
+
+test("lets the native backend release screen capture before terminating it", async () => {
+  const manager = new NativeDeviceManager();
+  const commands = [];
+  const native = new EventEmitter();
+  native.exitCode = null;
+  native.signalCode = null;
+  native.killed = false;
+  native.kill = () => { native.killed = true; };
+  native.stdin = {
+    destroyed: false, writableEnded: false, writable: true,
+    write(payload, callback) { commands.push(payload); callback?.(); }
+  };
+  const decoder = {
+    exitCode: null, signalCode: null, killed: false,
+    kill() { this.killed = true; }
+  };
+  let resolveStopped;
+  const session = {
+    native, decoder, stopped: false, stopTimer: null,
+    stoppedPromise: new Promise(resolve => { resolveStopped = resolve; }),
+    resolveStopped
+  };
+  manager.sessions.set("device", session);
+
+  const stopped = manager.stop("device");
+  assert.deepEqual(commands, ['{"command":"stop"}\n']);
+  assert.equal(native.killed, false);
+  native.exitCode = 0;
+  manager.sessionEnded("device", session, "native", "native backend exited (0)");
+  await stopped;
+
+  assert.equal(decoder.killed, true);
+  assert.equal(manager.sessions.has("device"), false);
+});
+
+test("stops and restarts media without closing the command session", () => {
+  const manager = new NativeDeviceManager();
+  const commands = [];
+  const session = {
+    stopped: false,
+    mediaActive: true,
+    native: {
+      exitCode: null,
+      signalCode: null,
+      stdin: {
+        destroyed: false, writableEnded: false, writable: true,
+        write(payload, callback) { commands.push(payload); callback?.(); }
+      }
+    }
+  };
+  manager.sessions.set("device", session);
+
+  manager.stopMedia("device");
+  assert.equal(session.mediaActive, false);
+  manager.startMedia("device");
+  assert.equal(session.mediaActive, true);
+  assert.deepEqual(commands, [
+    '{"command":"stopMedia"}\n',
+    '{"command":"startMedia"}\n'
+  ]);
 });

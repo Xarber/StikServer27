@@ -233,7 +233,10 @@ export class NativeDeviceManager extends EventEmitter {
 
   async start(device) {
     const existing = this.sessions.get(device.id);
-    if (existing && !existing.stopped) return existing;
+    if (existing && !existing.stopped) {
+      this.startMedia(device.id);
+      return existing;
+    }
     const description = await this.describe(device);
     if (!description.controllable) throw new Error(description.backendMessage || "Device is not ready");
 
@@ -246,7 +249,12 @@ export class NativeDeviceManager extends EventEmitter {
       "--pairing", this.pairingPath(device)
     ], { stdio: ["pipe", "pipe", "pipe"] });
     const decoder = spawn(this.ffmpeg, videoDecoderArguments(), { stdio: ["pipe", "pipe", "pipe"] });
-    const session = { device, native, decoder, stopped: false, orientation: "unknown" };
+    let resolveStopped;
+    const stoppedPromise = new Promise(resolve => { resolveStopped = resolve; });
+    const session = {
+      device, native, decoder, stopped: false, orientation: "unknown",
+      stopTimer: null, stoppedPromise, resolveStopped, mediaActive: true
+    };
     this.sessions.set(device.id, session);
 
     native.stdin.on("error", error => this.handleInputError(session, error));
@@ -272,8 +280,12 @@ export class NativeDeviceManager extends EventEmitter {
     decoder.stdout.on("data", chunk => jpegs.push(chunk));
     native.stderr.on("data", chunk => this.emit("log", device.id, chunk.toString("utf8").trim()));
     decoder.stderr.on("data", chunk => this.emit("log", device.id, `decoder: ${chunk.toString("utf8").trim()}`));
-    native.once("exit", (code, signal) => this.sessionEnded(device.id, `native backend exited (${code ?? signal})`));
-    decoder.once("exit", (code, signal) => this.sessionEnded(device.id, `decoder exited (${code ?? signal})`));
+    native.once("exit", (code, signal) => this.sessionEnded(
+      device.id, session, "native", `native backend exited (${code ?? signal})`
+    ));
+    decoder.once("exit", (code, signal) => this.sessionEnded(
+      device.id, session, "decoder", `decoder exited (${code ?? signal})`
+    ));
     this.emit("session", device.id, true);
     return session;
   }
@@ -339,6 +351,22 @@ export class NativeDeviceManager extends EventEmitter {
     if (!session || session.stopped) throw new Error("Device session is not active");
     if (!writeToChild(session.native, `${JSON.stringify(command)}\n`, error => this.handleInputError(session, error))) {
       throw new Error("Device session is not active");
+    }
+  }
+
+  startMedia(deviceId) {
+    const session = this.sessions.get(deviceId);
+    if (!session || session.stopped || session.mediaActive) return;
+    if (writeToChild(session.native, '{"command":"startMedia"}\n', error => this.handleInputError(session, error))) {
+      session.mediaActive = true;
+    }
+  }
+
+  stopMedia(deviceId) {
+    const session = this.sessions.get(deviceId);
+    if (!session || session.stopped || !session.mediaActive) return;
+    if (writeToChild(session.native, '{"command":"stopMedia"}\n', error => this.handleInputError(session, error))) {
+      session.mediaActive = false;
     }
   }
 
@@ -448,29 +476,72 @@ export class NativeDeviceManager extends EventEmitter {
   stop(deviceId, notifyBackend = true) {
     this.stopCommand(deviceId);
     const session = this.sessions.get(deviceId);
-    if (!session || session.stopped) return;
+    if (!session) return Promise.resolve();
+    if (session.stopped) return session.stoppedPromise;
     session.stopped = true;
-    if (notifyBackend) writeToChild(session.native, '{"command":"stop"}\n');
-    session.native.kill("SIGTERM");
-    session.decoder.kill("SIGTERM");
-    this.sessions.delete(deviceId);
     this.emit("session", deviceId, false);
+    const requestedGracefulStop = notifyBackend && writeToChild(
+      session.native,
+      '{"command":"stop"}\n',
+      error => this.handleInputError(session, error)
+    );
+    if (requestedGracefulStop) {
+      // The native backend owns the CoreDevice display session. Let it send
+      // stop_media_stream before falling back to a forced termination.
+      session.stopTimer = setTimeout(() => this.finishSession(deviceId, session, true), 3_000);
+    } else {
+      this.finishSession(deviceId, session, true);
+    }
+    return session.stoppedPromise;
   }
 
-  stopAll() {
-    for (const deviceId of [...this.sessions.keys()]) this.stop(deviceId);
+  async stopAll() {
+    const stops = [...this.sessions.keys()].map(deviceId => this.stop(deviceId));
     for (const deviceId of [...this.commandSessions.keys()]) this.stopCommand(deviceId);
     for (const pairing of this.pairingSessions.values()) pairing.child.kill("SIGTERM");
     this.pairingSessions.clear();
+    await Promise.all(stops);
   }
 
-  sessionEnded(deviceId, message) {
-    const session = this.sessions.get(deviceId);
-    if (!session || session.stopped) return;
-    this.emit("log", deviceId, message);
-    // The process has already closed its pipe. Do not write a final stop command,
-    // because Node reports that late write as an uncaught EPIPE in packaged apps.
-    this.stop(deviceId, false);
+  sessionEnded(deviceId, session, source, message) {
+    if (this.sessions.get(deviceId) !== session) return;
+    if (source === "decoder" && session.native.exitCode === null && session.native.signalCode === null) {
+      if (!session.stopped) this.emit("log", deviceId, message);
+      if (!session.stopped) {
+        session.stopped = true;
+        this.emit("session", deviceId, false);
+      }
+      const requestedGracefulStop = writeToChild(
+        session.native,
+        '{"command":"stop"}\n',
+        error => this.handleInputError(session, error)
+      );
+      if (requestedGracefulStop) {
+        session.stopTimer ||= setTimeout(() => this.finishSession(deviceId, session, true), 3_000);
+      } else {
+        this.finishSession(deviceId, session, true);
+      }
+      return;
+    }
+    if (!session.stopped) this.emit("log", deviceId, message);
+    this.finishSession(deviceId, session, false);
+  }
+
+  finishSession(deviceId, session, killNative) {
+    if (session.stopTimer) clearTimeout(session.stopTimer);
+    session.stopTimer = null;
+    if (killNative && session.native.exitCode === null && session.native.signalCode === null) {
+      session.native.kill("SIGTERM");
+    }
+    if (session.decoder.exitCode === null && session.decoder.signalCode === null) {
+      session.decoder.kill("SIGTERM");
+    }
+    if (this.sessions.get(deviceId) === session) this.sessions.delete(deviceId);
+    if (!session.stopped) {
+      session.stopped = true;
+      this.emit("session", deviceId, false);
+    }
+    session.resolveStopped();
   }
 
   handleInputError(session, error) {

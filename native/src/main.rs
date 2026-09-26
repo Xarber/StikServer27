@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     env,
     io::Write,
     net::{IpAddr, Ipv4Addr},
@@ -380,6 +380,7 @@ async fn stream(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> 
     }
 
     loop {
+        let mut requested_media_state = None;
         tokio::select! {
             Some(event) = battery_event_rx.recv() => {
                 write_event(&mut output, event).await?;
@@ -405,9 +406,11 @@ async fn stream(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> 
                 let Some(line) = line? else { break };
                 let command: ControlCommand = serde_json::from_str(&line)?;
                 if command.command == "stop" { break; }
-                let command_name = command.command.clone();
-                let request_id = command.request_id.clone();
-                if command.command == "batteryAnalytics" {
+                if command.command == "stopMedia" {
+                    requested_media_state = Some(false);
+                } else if command.command == "startMedia" {
+                    requested_media_state = Some(true);
+                } else if command.command == "batteryAnalytics" {
                     let event = match &battery_request_tx {
                         Some(requests) => match requests.try_send(()) {
                             Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => command_result("batteryAnalytics", json!({ "syncing": true })),
@@ -426,46 +429,48 @@ async fn stream(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> 
                         }),
                     };
                     write_event(&mut output, event).await?;
-                    continue;
-                }
-                let result = handle_command(
-                    command,
-                    &mut universal_hid,
-                    &mut main_keyboard,
-                    &mut buttons,
-                    &mut orientation,
-                    &interface_orientation,
-                    &mut app_service,
-                    &mut configuration,
-                    &mut diagnostics,
-                    &mut dvt,
-                    &mut location,
-                    &mut conditions,
-                    &mut handle,
-                    &mut handshake,
-                    &device_uuid,
-                    &mut side_store_uploads,
-                    &mut side_store_packages,
-                ).await;
-                match result {
-                    Ok(Some(mut event)) => {
-                        if let (Some(request_id), Some(object)) = (request_id, event.as_object_mut()) {
-                            object.insert("requestId".into(), request_id.into());
+                } else {
+                    let command_name = command.command.clone();
+                    let request_id = command.request_id.clone();
+                    let result = handle_command(
+                        command,
+                        &mut universal_hid,
+                        &mut main_keyboard,
+                        &mut buttons,
+                        &mut orientation,
+                        &interface_orientation,
+                        &mut app_service,
+                        &mut configuration,
+                        &mut diagnostics,
+                        &mut dvt,
+                        &mut location,
+                        &mut conditions,
+                        &mut handle,
+                        &mut handshake,
+                        &device_uuid,
+                        &mut side_store_uploads,
+                        &mut side_store_packages,
+                    ).await;
+                    match result {
+                        Ok(Some(mut event)) => {
+                            if let (Some(request_id), Some(object)) = (request_id, event.as_object_mut()) {
+                                object.insert("requestId".into(), request_id.into());
+                            }
+                            write_event(&mut output, event).await?
+                        },
+                        Ok(None) => {}
+                        Err(error) => {
+                            let mut event = json!({
+                                "type": "commandResult",
+                                "command": command_name,
+                                "ok": false,
+                                "message": error.to_string()
+                            });
+                            if let (Some(request_id), Some(object)) = (request_id, event.as_object_mut()) {
+                                object.insert("requestId".into(), request_id.into());
+                            }
+                            write_event(&mut output, event).await?;
                         }
-                        write_event(&mut output, event).await?
-                    },
-                    Ok(None) => {}
-                    Err(error) => {
-                        let mut event = json!({
-                            "type": "commandResult",
-                            "command": command_name,
-                            "ok": false,
-                            "message": error.to_string()
-                        });
-                        if let (Some(request_id), Some(object)) = (request_id, event.as_object_mut()) {
-                            object.insert("requestId".into(), request_id.into());
-                        }
-                        write_event(&mut output, event).await?;
                     }
                 }
             }
@@ -479,6 +484,30 @@ async fn stream(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>> 
                         "orientation": orientation_name(&interface_orientation)
                     })).await?;
                 }
+            }
+        }
+        if let Some(should_start) = requested_media_state {
+            if should_start {
+                if media.is_none() {
+                    media = Some(start_screen_media_session(&mut handle, &mut handshake).await?);
+                    depacketizer = HevcDepacketizer::new();
+                }
+                write_event(
+                    &mut output,
+                    command_result("startMedia", json!({ "streaming": true })),
+                )
+                .await?;
+            } else {
+                if let Some(mut current) = media.take() {
+                    current.display.stop_media_stream().await?;
+                    drop(current.audio_udp);
+                    depacketizer = HevcDepacketizer::new();
+                }
+                write_event(
+                    &mut output,
+                    command_result("stopMedia", json!({ "streaming": false })),
+                )
+                .await?;
             }
         }
     }
@@ -518,11 +547,37 @@ async fn battery_analytics_worker(
 async fn read_battery_analytics(
     client: &mut CrashReportCopyMobileClient,
 ) -> Result<Vec<serde_json::Value>, IdeviceError> {
-    let mut names = client.ls(None).await?;
-    names.retain(|name| {
-        let lower = name.to_ascii_lowercase();
-        lower.contains("analytics-") || lower.contains("log-aggregated-")
-    });
+    let mut names = Vec::new();
+    let mut directories = VecDeque::from([(None::<String>, 0_usize)]);
+    while let Some((directory, depth)) = directories.pop_front() {
+        let entries = match client.ls(directory.as_deref()).await {
+            Ok(entries) => entries,
+            Err(error) if directory.is_none() => return Err(error),
+            Err(_) => continue,
+        };
+        for name in entries {
+            if name == "." || name == ".." {
+                continue;
+            }
+            let path = directory
+                .as_ref()
+                .map(|directory| format!("{directory}/{name}"))
+                .unwrap_or_else(|| name.clone());
+            let lower = name.to_ascii_lowercase();
+            if lower.contains("analytics-") || lower.contains("log-aggregated-") {
+                names.push(path);
+                continue;
+            }
+            let looks_like_file = [
+                ".ips", ".crash", ".panic", ".log", ".txt", ".synced", ".plist",
+            ]
+            .iter()
+            .any(|extension| lower.contains(extension));
+            if depth < 3 && !lower.starts_with("proxieddevice-") && !looks_like_file {
+                directories.push_back((Some(path), depth + 1));
+            }
+        }
+    }
     names.sort();
 
     let mut history = Vec::new();

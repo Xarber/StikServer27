@@ -303,6 +303,7 @@ class WebSocketPeer {
       const previousSubscription = this.subscription;
       this.subscription = null;
       sendJSON(this, { type: "subscribed", deviceId: null });
+      nativeDevices.stopMedia(previousSubscription);
       stopDeviceIfUnused(previousSubscription);
       return;
     }
@@ -388,7 +389,11 @@ function stopDeviceIfUnused(deviceId) {
   const isUsed = [...viewers].some(viewer => !viewer.closed && (
     viewer.subscription === deviceId || viewer.commandDevices.has(deviceId)
   ));
-  if (isUsed) return;
+  if (isUsed) {
+    const isStreaming = [...viewers].some(viewer => !viewer.closed && viewer.subscription === deviceId);
+    if (!isStreaming) nativeDevices.stopMedia(deviceId);
+    return;
+  }
   nativeDevices.stop(deviceId);
 }
 
@@ -556,9 +561,9 @@ async function refreshDirectDevices() {
   publishDevices();
 }
 
-export function stopServer() {
+export async function stopServer() {
   discovery.stop();
-  nativeDevices.stopAll();
+  await nativeDevices.stopAll();
   for (const viewer of [...viewers]) viewer.close(1001, "StikServer is shutting down");
   for (const { peer } of agents.values()) peer.close(1001, "StikServer is shutting down");
   return new Promise(resolve => {
